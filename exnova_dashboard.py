@@ -6,6 +6,7 @@ import ta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -16,26 +17,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Actualización automática cada 5 segundos
+st_autorefresh(interval=5000, key="refresh")
+
 st.markdown("""
 <style>
-    .stButton>button {
-        width: 100%;
-        height: 3.2em;
-        font-size: 17px;
-        font-weight: bold;
-    }
     .signal-box {
         padding: 18px;
         border-radius: 14px;
         text-align: center;
-        margin: 12px 0;
+        margin: 10px 0;
+        color: white;
+        font-weight: bold;
+    }
+    .prob-box {
+        padding: 12px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 6px 0;
         color: white;
     }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("📱 Exnova Signals")
-st.caption("Herramienta educativa de señales Call/Put • No es consejo financiero")
+st.caption("Actualización cada 5 segundos • Solo educativo")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -50,7 +56,7 @@ with col2:
 periodo_map = {"1m": "5d", "5m": "30d", "15m": "60d"}
 interval_map = {"1m": "1m", "5m": "5m", "15m": "15m"}
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=4)
 def obtener_datos(ticker, interval, period):
     df = yf.download(ticker, period=period, interval=interval, progress=False)
     if isinstance(df.columns, pd.MultiIndex):
@@ -60,7 +66,7 @@ def obtener_datos(ticker, interval, period):
 df = obtener_datos(activo, interval_map[timeframe], periodo_map[timeframe])
 
 if len(df) < 30:
-    st.error("No hay suficientes datos. Prueba otro timeframe o activo.")
+    st.error("No hay suficientes datos. Prueba otro timeframe.")
     st.stop()
 
 df['RSI'] = ta.momentum.rsi(df['Close'], 7)
@@ -74,7 +80,7 @@ df = df.dropna()
 ultimo = df.iloc[-1]
 anterior = df.iloc[-2]
 
-def generar_senal(row, prev):
+def calcular_score(row, prev):
     score = 0
     if row['RSI'] < 30: score += 2
     elif row['RSI'] > 70: score -= 2
@@ -95,39 +101,57 @@ def generar_senal(row, prev):
 
     return score
 
-score = generar_senal(ultimo, anterior)
+score = calcular_score(ultimo, anterior)
 
-if score >= 3:
+prob_call = max(5, min(95, 50 + score * 8))
+prob_put = 100 - prob_call
+
+if score >= 2.5:
     senal = "CALL"
     color = "#00C853"
-    confianza = min(94, 58 + score * 5)
-elif score <= -3:
+elif score <= -2.5:
     senal = "PUT"
     color = "#D50000"
-    confianza = min(94, 58 + abs(score) * 5)
 else:
     senal = "NEUTRAL"
     color = "#757575"
-    confianza = 50
 
 st.markdown(f"""
 <div class="signal-box" style="background-color:{color};">
-    <div style="font-size:17px;">SEÑAL ACTUAL</div>
-    <div style="font-size:40px; font-weight:bold; margin:8px 0;">{senal}</div>
-    <div style="font-size:19px;">Confianza: {confianza:.0f}%</div>
+    <div style="font-size:16px;">SEÑAL ACTUAL</div>
+    <div style="font-size:38px; margin:6px 0;">{senal}</div>
 </div>
 """, unsafe_allow_html=True)
+
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown(f"""
+    <div class="prob-box" style="background-color:#00C853;">
+        <div>ALCISTA (CALL)</div>
+        <div style="font-size:28px;">{prob_call:.0f}%</div>
+    </div>
+    """, unsafe_allow_html=True)
+with c2:
+    st.markdown(f"""
+    <div class="prob-box" style="background-color:#D50000;">
+        <div>BAJISTA (PUT)</div>
+        <div style="font-size:28px;">{prob_put:.0f}%</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 m1, m2, m3 = st.columns(3)
 precio = f"{ultimo['Close']:.5f}" if "USD=X" in activo else f"{ultimo['Close']:.2f}"
 m1.metric("Precio", precio)
-m2.metric("RSI (7)", f"{ultimo['RSI']:.1f}")
+m2.metric("RSI", f"{ultimo['RSI']:.1f}")
 m3.metric("Score", f"{score:.1f}")
+
+st.caption(f"Última actualización: {datetime.now().strftime('%H:%M:%S')}")
 
 st.subheader("Gráfico")
 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.07, row_heights=[0.7, 0.3])
 
-fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Precio"), row=1, col=1)
+fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'],
+                             low=df['Low'], close=df['Close'], name="Precio"), row=1, col=1)
 fig.add_trace(go.Scatter(x=df.index, y=df['EMA_9'], name="EMA 9", line=dict(color='orange', width=1.5)), row=1, col=1)
 fig.add_trace(go.Scatter(x=df.index, y=df['EMA_21'], name="EMA 21", line=dict(color='blue', width=1.5)), row=1, col=1)
 
@@ -135,16 +159,13 @@ fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI", line=dict(color='p
 fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
 fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
 
-fig.update_layout(height=460, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+fig.update_layout(height=450, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=20, b=10), showlegend=False)
 st.plotly_chart(fig, use_container_width=True)
 
-with st.expander("Detalles de la señal"):
+with st.expander("Detalles"):
     st.write(f"**Activo:** {activo}")
     st.write(f"**Timeframe:** {timeframe}")
     st.write(f"**Score:** {score:.2f}")
-    st.write(f"**RSI:** {ultimo['RSI']:.1f}")
     st.write(f"**Tendencia EMA:** {'Alcista' if ultimo['EMA_9'] > ultimo['EMA_21'] else 'Bajista'}")
-    st.write(f"**Actualizado:** {datetime.now().strftime('%H:%M:%S')}")
 
-st.markdown("---")
-st.warning("Esta herramienta es solo educativa. Las señales no garantizan resultados. El trading de opciones binarias implica alto riesgo de pérdida del capital.")
+st.warning("Herramienta educativa. No garantiza resultados. Alto riesgo de pérdida.")
