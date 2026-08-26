@@ -28,12 +28,12 @@ iframe{height:200px!important}
 """, unsafe_allow_html=True)
 
 class NN:
-    def __init__(self,inp,hid,out,lr=0.01):
+    def __init__(self,inp,hid,out,lr=0.05):
         np.random.seed(42)
         self.lr=lr
-        self.W1=np.random.randn(inp,hid)*np.sqrt(2.0/inp)
+        self.W1=np.random.randn(inp,hid)*0.1
         self.b1=np.zeros((1,hid))
-        self.W2=np.random.randn(hid,out)*np.sqrt(2.0/hid)
+        self.W2=np.random.randn(hid,out)*0.1
         self.b2=np.zeros((1,out))
     def relu(self,x):return np.maximum(0,x)
     def drelu(self,x):return (x>0).astype(float)
@@ -45,7 +45,7 @@ class NN:
         self.a1=self.relu(self.z1)
         self.z2=np.dot(self.a1,self.W2)+self.b2
         return self.softmax(self.z2)
-    def train(self,X,y,epochs=100):
+    def train(self,X,y,epochs=30):
         y=np.array(y)
         for _ in range(epochs):
             pred=self.forward(X)
@@ -60,7 +60,7 @@ class NN:
 def rsi(s,w=14):
     d=s.diff();g=d.where(d>0,0);l=(-d).where(d<0,0)
     ag=g.rolling(w,w).mean();al=l.rolling(w,w).mean()
-    rs=ag/al;rs=rs.replace([np.inf,-np.inf],1)
+    rs=ag/al;rs=rs.replace([np.inf,-np.inf],1).fillna(1)
     return 100-(100/(1+rs))
 def ema(s,p):return s.ewm(span=p,adjust=False).mean()
 def macd(s):
@@ -69,15 +69,18 @@ def macd(s):
 def atr(df):
     tr=pd.concat([df["High"]-df["Low"],(df["High"]-df["Close"].shift()).abs(),(df["Low"]-df["Close"].shift()).abs()],axis=1).max(axis=1)
     return tr.rolling(14,1).mean()
-def bb(s):m=s.rolling(20,1).mean();sd=s.rolling(20,1).std();sd=sd.replace(0,0.001);return m+2*sd,m-2*sd
+def bb(s):
+    m=s.rolling(20,1).mean();sd=s.rolling(20,1).std().replace(0,0.001)
+    return m+2*sd,m-2*sd
 def stoch(df):
     ll=df["Low"].rolling(14,1).min();hh=df["High"].rolling(14,1).max()
-    r=hh-ll;r=r.replace(0,0.001)
-    k=100*(df["Close"]-ll)/r;return k,k.rolling(3,1).mean()
+    r=(hh-ll).replace(0,0.001)
+    k=100*(df["Close"]-ll)/r
+    return k,k.rolling(3,1).mean()
 def chop(df):
     tr=pd.concat([df["High"]-df["Low"],(df["High"]-df["Close"].shift()).abs(),(df["Low"]-df["Close"].shift()).abs()],axis=1).max(axis=1)
     a=tr.rolling(14,1).sum();mx=df["High"].rolling(14,1).max();mn=df["Low"].rolling(14,1).min()
-    r=mx-mn;r=r.replace(0,0.001)
+    r=(mx-mn).replace(0,0.001)
     return (100*np.log10(a/r)/np.log10(14)).fillna(50)
 
 def indis(df):
@@ -101,7 +104,7 @@ def feats(df):
     f["e12"]=(df["Close"]/df["E12"].replace(0,0.001)-1)*10
     f["e26"]=(df["Close"]/df["E26"].replace(0,0.001)-1)*10
     f["a"]=np.tanh(df["ATR"]/cm)
-    bw=df["BU"]-df["BL"];bw=bw.replace(0,0.001)
+    bw=(df["BU"]-df["BL"]).replace(0,0.001)
     f["bb"]=(df["Close"]-(df["BU"]+df["BL"])/2)/bw*2
     f["c"]=df["CH"]/100
     f["v"]=np.tanh(df["VOL"]*10)
@@ -118,9 +121,9 @@ def dataset(df,f,lb=10):
             y.append([0,1,0] if fr>0.003 else [1,0,0] if fr<-0.003 else [0,0,1])
     return np.array(X),np.array(y)
 
-if "nn" not in st.session_state:st.session_state.nn=NN(120,24,3,0.005)
+if "nn" not in st.session_state:st.session_state.nn=NN(120,16,3,0.05)
 if "done" not in st.session_state:st.session_state.done=False
-if "fallback" not in st.session_state:st.session_state.fallback=False
+if "fb" not in st.session_state:st.session_state.fb=False
 
 c1,c2,c3=st.columns([2,3,2])
 with c1:st.markdown("<h5 style='margin:0'>🧠 Exnova AI</h5>",unsafe_allow_html=True)
@@ -149,28 +152,28 @@ if len(df)<60:st.error("❌ Insuficiente");st.stop()
 
 f=feats(df)
 if not st.session_state.done:
-    with st.spinner("🧠 Entrenando..."):
-        try:
-            X,y=dataset(df,f)
-            if len(X)>30:
-                st.session_state.nn.train(X,y,200)
-                st.session_state.done=True;st.session_state.n=len(X);st.session_state.fallback=False
-            else:
-                st.session_state.done=True;st.session_state.n=0;st.session_state.fallback=True
-        except Exception as e:
-            st.session_state.done=True;st.session_state.fallback=True
+    st.info("🧠 Entrenando IA... (3 segundos)")
+    try:
+        X,y=dataset(df,f)
+        if len(X)>20:
+            st.session_state.nn.train(X,y,30)
+            st.session_state.done=True;st.session_state.n=len(X);st.session_state.fb=False
+        else:
+            st.session_state.done=True;st.session_state.n=0;st.session_state.fb=True
+    except:
+        st.session_state.done=True;st.session_state.fb=True
 
 fa=f.values
 if len(fa)>=10:
     inp=fa[-10:].flatten().reshape(1,-1)
     if inp.shape[1]<120:inp=np.pad(inp,((0,0),(0,120-inp.shape[1])),'constant',constant_values=0)
     elif inp.shape[1]>120:inp=inp[:,:120]
-    if not st.session_state.fallback:
+    if not st.session_state.fb:
         try:
             p=st.session_state.nn.forward(inp)
             pc=np.argmax(p);conf=np.max(p)*100
         except:
-            p=[[0.33,0.33,0.34]];pc=2;conf=34;st.session_state.fallback=True
+            p=[[0.33,0.33,0.34]];pc=2;conf=34;st.session_state.fb=True
     else:
         p=[[0.33,0.33,0.34]];pc=2;conf=34
 else:
@@ -235,6 +238,6 @@ inds=[("RSI",f"{u.RSI:.0f}","<30|>70"),("MACD",f"{u.MACD:.{dec}f}","Cruce"),("St
 for col,(n,v,d) in zip([i1,i2,i3,i4,i5],inds):
     with col:st.markdown(f'<div class="metric-mini"><div style="font-size:8px;color:#888">{n}</div><div style="font-size:12px;font-weight:600">{v}</div><div style="font-size:7px;color:#555">{d}</div></div>',unsafe_allow_html=True)
 
-fb="⚠️ Fallback activo" if st.session_state.fallback else "✅ IA entrenada"
-st.markdown(f'<div style="background:linear-gradient(135deg,#0f2027,#203a43);border:1px solid #00d2ff;padding:4px;border-radius:4px;margin:2px 0;font-size:9px"><p style="margin:0;color:#00d2ff"><b>🧬 {fb}:</b> PUT {put_pct:.1f}% | CALL {call_pct:.1f}% | NEUTRAL {neu_pct:.1f}% | Choppiness {u.CH:.0f}</p></div>',unsafe_allow_html=True)
+fb="⚠️ Fallback" if st.session_state.fb else "✅ IA lista"
+st.markdown(f'<div style="background:linear-gradient(135deg,#0f2027,#203a43);border:1px solid #00d2ff;padding:4px;border-radius:4px;margin:2px 0;font-size:9px"><p style="margin:0;color:#00d2ff"><b>🧬 {fb}:</b> PUT {put_pct:.1f}% | CALL {call_pct:.1f}% | NEUTRAL {neu_pct:.1f}% | Chop {u.CH:.0f}</p></div>',unsafe_allow_html=True)
 st.markdown('<div class="disclaimer">⚠️ IA propia desde cero con Numpy • Alto riesgo</div>',unsafe_allow_html=True)
