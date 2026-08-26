@@ -6,17 +6,59 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+import os
+import requests
 import warnings
 warnings.filterwarnings("ignore")
 
 # ═══════════════════════════════════════════════
-# CONFIGURACIÓN
+# SUPABASE STORAGE (persistencia del modelo)
 # ═══════════════════════════════════════════════
-st.set_page_config(page_title="Exnova AI Pro", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+BUCKET = "models"
+
+def upload_model(nn, asset, tf):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        path = f"/tmp/model_{asset}_{tf}.npz"
+        nn.save(path)
+        with open(path, "rb") as f:
+            data = f.read()
+        url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/model_{asset}_{tf}.npz"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/octet-stream",
+            "x-upsert": "true"
+        }
+        r = requests.post(url, headers=headers, data=data, timeout=10)
+        return r.status_code in [200, 201]
+    except Exception:
+        return False
+
+def download_model(asset, tf):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/model_{asset}_{tf}.npz"
+        headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            path = f"/tmp/model_{asset}_{tf}.npz"
+            with open(path, "wb") as f:
+                f.write(r.content)
+            return NN.load(path)
+    except Exception:
+        pass
+    return None
 
 # ═══════════════════════════════════════════════
-# CSS
+# CONFIG
 # ═══════════════════════════════════════════════
+st.set_page_config(page_title="Exnova AI Live", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
+
 st.markdown("""
 <style>
 .stApp{background-color:#0b0e14;color:#e0e0e0}
@@ -37,7 +79,7 @@ h1,h2,h3,h4,h5,h6,p{margin:0!important;padding:0!important}
 """, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════
-# RED NEURONAL LIGERA
+# RED NEURONAL CON ONLINE LEARNING
 # ═══════════════════════════════════════════════
 class NN:
     def __init__(self, inp, hid, out, lr=0.01, l2=0.001):
@@ -60,47 +102,59 @@ class NN:
         return e / np.sum(e, axis=1, keepdims=True)
 
     def forward(self, X):
-        self._last_z1 = np.dot(X, self.W1) + self.b1
-        self._last_a1 = self.relu(self._last_z1)
-        z2 = np.dot(self._last_a1, self.W2) + self.b2
+        self._z1 = np.dot(X, self.W1) + self.b1
+        self._a1 = self.relu(self._z1)
+        z2 = np.dot(self._a1, self.W2) + self.b2
         return self.softmax(z2)
 
-    def train(self, X, y, epochs=20, val_split=0.2):
+    def train(self, X, y, epochs=30):
         y = np.array(y)
-        n = X.shape[0]
-        if n > 20 and val_split > 0:
-            split_idx = int(n * (1 - val_split))
-            idx = np.random.permutation(n)
-            X_tr, y_tr = X[idx[:split_idx]], y[idx[:split_idx]]
-            X_val, y_val = X[idx[split_idx:]], y[idx[split_idx:]]
-        else:
-            X_tr, y_tr = X, y
-            X_val, y_val = None, None
-
         for _ in range(epochs):
-            pred = self.forward(X_tr)
-            dz2 = (pred - y_tr) / X_tr.shape[0]
-            dW2 = np.dot(self._last_a1.T, dz2) + self.l2 * self.W2
+            pred = self.forward(X)
+            dz2 = (pred - y) / X.shape[0]
+            dW2 = np.dot(self._a1.T, dz2) + self.l2 * self.W2
             db2 = np.sum(dz2, axis=0, keepdims=True)
-            dz1 = np.dot(dz2, self.W2.T) * self.drelu(self._last_z1)
-            dW1 = np.dot(X_tr.T, dz1) + self.l2 * self.W1
+            dz1 = np.dot(dz2, self.W2.T) * self.drelu(self._z1)
+            dW1 = np.dot(X.T, dz1) + self.l2 * self.W1
             db1 = np.sum(dz1, axis=0, keepdims=True)
             self.W2 -= self.lr * dW2
             self.b2 -= self.lr * db2
             self.W1 -= self.lr * dW1
             self.b1 -= self.lr * db1
+        return self
 
-        if X_val is not None:
-            val_pred = self.forward(X_val)
-            acc = np.mean(np.argmax(val_pred, axis=1) == np.argmax(y_val, axis=1))
-            return acc
-        return 0.0
+    def train_online(self, X, y, epochs=1):
+        y = np.array(y)
+        for _ in range(epochs):
+            pred = self.forward(X)
+            dz2 = (pred - y) / X.shape[0]
+            dW2 = np.dot(self._a1.T, dz2) + self.l2 * self.W2
+            db2 = np.sum(dz2, axis=0, keepdims=True)
+            dz1 = np.dot(dz2, self.W2.T) * self.drelu(self._z1)
+            dW1 = np.dot(X.T, dz1) + self.l2 * self.W1
+            db1 = np.sum(dz1, axis=0, keepdims=True)
+            self.W2 -= self.lr * dW2
+            self.b2 -= self.lr * db2
+            self.W1 -= self.lr * dW1
+            self.b1 -= self.lr * db1
+        return self
 
     def predict(self, X):
         z1 = np.dot(X, self.W1) + self.b1
         a1 = self.relu(z1)
         z2 = np.dot(a1, self.W2) + self.b2
         return self.softmax(z2)
+
+    def save(self, path):
+        np.savez(path, W1=self.W1, b1=self.b1, W2=self.W2, b2=self.b2,
+                 inp=self.inp, hid=self.hid, out=self.out)
+
+    @classmethod
+    def load(cls, path):
+        data = np.load(path)
+        nn = cls(int(data["inp"]), int(data["hid"]), int(data["out"]))
+        nn.W1, nn.b1, nn.W2, nn.b2 = data["W1"], data["b1"], data["W2"], data["b2"]
+        return nn
 
 # ═══════════════════════════════════════════════
 # INDICADORES
@@ -211,10 +265,7 @@ def dataset(df, f, lb=10, horizon=5):
                 y.append([0, 0, 1])
     return np.array(X), np.array(y), threshold
 
-# ═══════════════════════════════════════════════
-# DESCARGA CON CACHE
-# ═══════════════════════════════════════════════
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_data(ticker, interval):
     try:
         pm = {"1m": "7d", "5m": "30d", "15m": "60d", "1h": "180d"}
@@ -226,34 +277,23 @@ def get_data(ticker, interval):
             if col not in df.columns:
                 return pd.DataFrame()
         return df.dropna()
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 # ═══════════════════════════════════════════════
 # SESSION STATE
 # ═══════════════════════════════════════════════
-if "nn" not in st.session_state:
-    st.session_state.nn = None
-if "done" not in st.session_state:
-    st.session_state.done = False
-if "fb" not in st.session_state:
-    st.session_state.fb = False
-if "last_asset" not in st.session_state:
-    st.session_state.last_asset = None
-if "last_tf" not in st.session_state:
-    st.session_state.last_tf = None
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "refresh" not in st.session_state:
-    st.session_state.refresh = 60
-if "paused" not in st.session_state:
-    st.session_state.paused = False
-if "train_info" not in st.session_state:
-    st.session_state.train_info = {}
-if "threshold" not in st.session_state:
-    st.session_state.threshold = 0.003
-if "last_signal_ts" not in st.session_state:
-    st.session_state.last_signal_ts = None
+defaults = {
+    "nn": None, "done": False, "fb": False,
+    "last_asset": None, "last_tf": None,
+    "history": [], "refresh": 30, "paused": False,
+    "train_info": {}, "threshold": 0.003,
+    "last_signal_ts": None, "data_hash": None,
+    "last_minute": None,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ═══════════════════════════════════════════════
 # HEADER
@@ -261,10 +301,10 @@ if "last_signal_ts" not in st.session_state:
 c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
 
 with c1:
-    st.markdown("<h4 style='margin:0;color:#00d2ff'>🧠 Exnova AI Pro</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='margin:0;color:#00d2ff'>🧠 Exnova AI Live</h4>", unsafe_allow_html=True)
 
 with c2:
-    refresh_opt = st.selectbox("⏱ Refresh", [30, 60, 120, 300], index=1,
+    refresh_opt = st.selectbox("⏱ Refresh", [10, 30, 60, 120], index=1,
                                label_visibility="collapsed", key="refresh_sel")
     st.session_state.refresh = refresh_opt
 
@@ -296,6 +336,7 @@ if st.session_state.last_asset != asset or st.session_state.last_tf != tf:
     st.session_state.nn = None
     st.session_state.train_info = {}
     st.session_state.history = []
+    st.session_state.data_hash = None
     st.session_state.last_asset = asset
     st.session_state.last_tf = tf
 
@@ -316,38 +357,72 @@ if len(df) < 60:
 f = feats(df)
 
 # ═══════════════════════════════════════════════
-# ENTRENAMIENTO
+# CARGAR O ENTRENAR MODELO
 # ═══════════════════════════════════════════════
 if not st.session_state.done:
-    with st.spinner("🧠 Entrenando modelo..."):
-        try:
-            X, y, threshold = dataset(df, f)
-            st.session_state.threshold = threshold
+    with st.spinner("🧠 Cargando modelo..."):
+        # 1) INTENTAR CARGAR DESDE SUPABASE
+        loaded = download_model(asset, tf)
+        if loaded:
+            st.session_state.nn = loaded
+            st.session_state.done = True
+            st.session_state.fb = False
+            st.session_state.train_info = {
+                "mode": "Cargado desde nube",
+                "source": "Supabase Storage"
+            }
+        else:
+            # 2) ENTRENAR DESDE CERO
+            try:
+                X, y, threshold = dataset(df, f)
+                st.session_state.threshold = threshold
 
-            if len(X) > 20:
-                n_features = X.shape[1]
-                hidden = min(8, max(4, n_features // 10))
-                nn = NN(n_features, hidden, 3, lr=0.01, l2=0.001)
-                val_acc = nn.train(X, y, epochs=20, val_split=0.2)
+                if len(X) > 30:
+                    n_features = X.shape[1]
+                    hidden = min(8, max(4, n_features // 10))
+                    nn = NN(n_features, hidden, 3, lr=0.01, l2=0.001)
+                    nn.train(X, y, epochs=30)
 
-                st.session_state.nn = nn
-                st.session_state.done = True
-                st.session_state.fb = False
-                st.session_state.train_info = {
-                    "samples": len(X),
-                    "features": n_features,
-                    "hidden": hidden,
-                    "val_acc": val_acc,
-                    "threshold": threshold,
-                }
-            else:
+                    st.session_state.nn = nn
+                    st.session_state.done = True
+                    st.session_state.fb = False
+                    st.session_state.train_info = {
+                        "samples": len(X), "features": n_features,
+                        "hidden": hidden, "threshold": threshold,
+                        "mode": "Entrenamiento base",
+                    }
+                    # Guardar en Supabase inmediatamente
+                    upload_model(nn, asset, tf)
+                else:
+                    st.session_state.done = True
+                    st.session_state.fb = True
+                    st.session_state.train_info = {"samples": len(X), "error": "Muestras insuficientes"}
+            except Exception as e:
                 st.session_state.done = True
                 st.session_state.fb = True
-                st.session_state.train_info = {"samples": len(X), "error": "Muestras insuficientes"}
-        except Exception as e:
-            st.session_state.done = True
-            st.session_state.fb = True
-            st.session_state.train_info = {"error": str(e)}
+                st.session_state.train_info = {"error": str(e)}
+
+# ═══════════════════════════════════════════════
+# ONLINE LEARNING + GUARDAR
+# ═══════════════════════════════════════════════
+current_hash = hash(str(df.index[-1])) if len(df) > 0 else 0
+
+if st.session_state.done and not st.session_state.fb and st.session_state.nn is not None:
+    if st.session_state.data_hash != current_hash:
+        try:
+            X, y, _ = dataset(df, f)
+            if len(X) > 5:
+                batch_size = min(30, len(X))
+                X_batch = X[-batch_size:]
+                y_batch = y[-batch_size:]
+                st.session_state.nn.train_online(X_batch, y_batch, epochs=1)
+                st.session_state.train_info["mode"] = f"Online learning ({batch_size})"
+                st.session_state.train_info["last_update"] = datetime.now().strftime("%H:%M:%S")
+                # GUARDAR EN SUPABASE DESPUÉS DE CADA APRENDIZAJE
+                upload_model(st.session_state.nn, asset, tf)
+        except Exception:
+            pass
+        st.session_state.data_hash = current_hash
 
 # ═══════════════════════════════════════════════
 # PREDICCIÓN
@@ -358,16 +433,14 @@ if len(fa) >= 10 and st.session_state.nn is not None and not st.session_state.fb
     try:
         inp = fa[-10:].flatten().reshape(1, -1)
         expected = st.session_state.nn.inp
-
         if inp.shape[1] < expected:
             inp = np.pad(inp, ((0, 0), (0, expected - inp.shape[1])), constant_values=0)
         elif inp.shape[1] > expected:
             inp = inp[:, :expected]
-
         p = st.session_state.nn.predict(inp)
         pc = np.argmax(p)
         conf = np.max(p) * 100
-    except Exception as e:
+    except Exception:
         p = [[0.33, 0.33, 0.34]]
         pc = 2
         conf = 34
@@ -383,23 +456,6 @@ em = ["📉", "📈", "➖"][pc]
 put_pct = p[0][0] * 100
 call_pct = p[0][1] * 100
 neu_pct = p[0][2] * 100
-
-u = df.iloc[-1]
-atr_val = u.ATR
-pa = u.Close
-
-dec = 5 if "USD=X" in ticker or "JPY=X" in ticker or "AUD" in ticker else 2
-
-sp = atr_val * 1.5 if dec == 5 else atr_val * 2
-tp = atr_val * 3 if dec == 5 else atr_val * 4
-if sig == "CALL":
-    sl = pa - sp
-    tpv = pa + tp
-elif sig == "PUT":
-    sl = pa + sp
-    tpv = pa - tp
-else:
-    sl = tpv = None
 # ═══════════════════════════════════════════════
 # PARTE 2 — UI, GRÁFICO, INDICADORES, HISTORIAL
 # ═══════════════════════════════════════════════
@@ -492,46 +548,66 @@ info = st.session_state.train_info
 fb = st.session_state.fb
 
 status_color = "#FF1744" if fb else "#00E676"
-status_icon = "⚠️ Fallback" if fb else "✅ Modelo activo"
+status_icon = "⚠️ Fallback" if fb else "✅ IA viva"
+mode_text = info.get("mode", "")
+last_up = info.get("last_update", "")
 
 st.markdown(f"""
 <div style="background:linear-gradient(135deg,#0f2027,#203a43);border:1px solid {status_color};padding:6px;border-radius:6px;margin:8px 0;font-size:10px">
 <p style="margin:0;color:{status_color}"><b>🧬 {status_icon}</b> 
 | PUT {put_pct:.1f}% | CALL {call_pct:.1f}% | NEUTRAL {neu_pct:.1f}% 
-| Umbral: {st.session_state.threshold*100:.2f}% | Chop: {u.CH:.0f}</p>
+| {mode_text} {last_up}</p>
 </div>
 """, unsafe_allow_html=True)
 
 with st.expander("🔧 Detalles del modelo", expanded=False):
     if info.get("samples"):
-        st.write(f"**Muestras:** {info['samples']}")
+        st.write(f"**Muestras base:** {info['samples']}")
     if info.get("features"):
         st.write(f"**Features:** {info['features']}")
     if info.get("hidden"):
         st.write(f"**Neuronas ocultas:** {info['hidden']}")
-    if info.get("val_acc") is not None:
-        st.write(f"**Val accuracy:** {info['val_acc']*100:.1f}%")
+    if info.get("mode"):
+        st.write(f"**Modo:** {info['mode']}")
+    if info.get("source"):
+        st.write(f"**Origen:** {info['source']}")
     if info.get("error"):
         st.write(f"❌ Error: {info['error']}")
 
-if st.session_state.last_signal_ts != str(dp.index[-1]):
+now_key = datetime.now().strftime("%H:%M")
+if st.session_state.get("last_minute") != now_key:
     st.session_state.history.append({
         "time": datetime.now().strftime("%H:%M:%S"),
         "signal": sig,
         "conf": conf,
         "price": pa,
-        "rsi": u.RSI,
-        "chop": u.CH,
     })
-    st.session_state.last_signal_ts = str(dp.index[-1])
-    st.session_state.history = st.session_state.history[-20:]
+    st.session_state.last_minute = now_key
+    st.session_state.history = st.session_state.history[-30:]
 
 if st.session_state.history:
-    st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>🕐 Historial de señales</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>🕐 Historial</p>", unsafe_allow_html=True)
     pills = []
-    for h in reversed(st.session_state.history[-10:]):
+    for h in reversed(st.session_state.history[-12:]):
         sig_color = {"PUT": "#FF1744", "CALL": "#00E676", "NEUTRAL": "#546E7A"}[h["signal"]]
         pills.append(f'<span class="history-pill" style="background:{sig_color}30;color:{sig_color};border:1px solid {sig_color}60">{h["time"]} {h["signal"]} {h["conf"]:.0f}%</span>')
     st.markdown(f'<div class="history-row">{" ".join(pills)}</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="disclaimer">⚠️ Software educativo. La IA no garantiza resultados. Trading de alto riesgo.</div>', unsafe_allow_html=True)
+st.markdown('<div class="disclaimer">⚠️ Software educativo. IA con online learning persistente. Trading de alto riesgo.</div>', unsafe_allow_html=True)
+
+u = df.iloc[-1]
+atr_val = u.ATR
+pa = u.Close
+
+dec = 5 if "USD=X" in ticker or "JPY=X" in ticker or "AUD" in ticker else 2
+
+sp = atr_val * 1.5 if dec == 5 else atr_val * 2
+tp = atr_val * 3 if dec == 5 else atr_val * 4
+if sig == "CALL":
+    sl = pa - sp
+    tpv = pa + tp
+elif sig == "PUT":
+    sl = pa + sp
+    tpv = pa - tp
+else:
+    sl = tpv = None
