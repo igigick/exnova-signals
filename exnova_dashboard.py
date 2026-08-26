@@ -4,157 +4,194 @@ import pandas as pd
 import ta
 import plotly.graph_objects as go
 from datetime import datetime
-import time
+from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="Exnova Signals", page_icon="📱", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Exnova Signals",
+    page_icon="📱",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-# === AUTO REFRESH MÁS CONFIABLE ===
-refresh_sec = 12
-st.markdown(f"""
-<meta http-equiv="refresh" content="{refresh_sec}">
-""", unsafe_allow_html=True)
+# Actualización suave cada 15 segundos
+st_autorefresh(interval=15 * 1000, key="auto_refresh")
 
+# Estilos
 st.markdown("""
 <style>
-    .stApp { background-color: #0e1117; }
+    .stApp { background-color: #0b0e14; color: white; }
     .signal-box {
-        padding: 24px 10px;
-        border-radius: 16px;
+        padding: 26px 12px;
+        border-radius: 18px;
         text-align: center;
-        margin: 10px 0;
+        margin: 12px 0 10px 0;
         color: white;
-        font-weight: bold;
+        font-weight: 700;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     }
     .prob-box {
-        padding: 16px 8px;
-        border-radius: 12px;
+        padding: 16px 10px;
+        border-radius: 14px;
         text-align: center;
         color: white;
-        font-weight: bold;
-        margin-bottom: 8px;
+        font-weight: 600;
     }
+    .stSelectbox label { display: none; }
+    div[data-testid="stMetricValue"] { font-size: 1.3rem; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align:center; color:white;'>Exnova Signals</h2>", unsafe_allow_html=True)
-st.caption(f"Se actualiza solo cada {refresh_sec}s • {datetime.now().strftime('%H:%M:%S')}")
+# Título
+st.markdown("<h2 style='text-align:center; margin-bottom:5px;'>Exnova Signals</h2>", unsafe_allow_html=True)
+st.caption(f"Actualización automática • {datetime.now().strftime('%H:%M:%S')}")
 
-c1, c2 = st.columns(2)
-with c1:
+# Selectores
+col1, col2 = st.columns(2)
+with col1:
     activo = st.selectbox("Activo", ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "BTC-USD", "ETH-USD"], index=0)
-with c2:
+with col2:
     timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1)
 
-@st.cache_data(ttl=10)
-def get_data(ticker, interval):
-    period = {"1m": "1d", "5m": "5d", "15m": "10d"}[interval]
-    df = yf.download(ticker, period=period, interval=interval, progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df.dropna()
+# Datos
+@st.cache_data(ttl=12, show_spinner=False)
+def obtener_datos(ticker, interval):
+    try:
+        period = {"1m": "1d", "5m": "5d", "15m": "10d"}[interval]
+        df = yf.download(ticker, period=period, interval=interval, progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df.dropna()
+    except Exception:
+        return pd.DataFrame()
 
-df = get_data(activo, timeframe)
+df = obtener_datos(activo, timeframe)
 
-if len(df) < 25:
-    st.warning("Pocos datos. Cambia el timeframe.")
+if df.empty or len(df) < 30:
+    st.error("No se pudieron cargar datos. Intenta otro activo o timeframe.")
     st.stop()
 
-df['RSI'] = ta.momentum.rsi(df['Close'], 7)
-df['EMA9'] = ta.trend.ema_indicator(df['Close'], 9)
-df['EMA21'] = ta.trend.ema_indicator(df['Close'], 21)
-df['MACD'] = ta.trend.macd_diff(df['Close'], 12, 6)
-df['Stoch'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'], 8)
+# Indicadores
+df['RSI'] = ta.momentum.rsi(df['Close'], window=7)
+df['EMA9'] = ta.trend.ema_indicator(df['Close'], window=9)
+df['EMA21'] = ta.trend.ema_indicator(df['Close'], window=21)
+df['MACD'] = ta.trend.macd_diff(df['Close'], window_slow=16, window_fast=8)
+df['Stoch'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'], window=8)
 df = df.dropna()
 
 ultimo = df.iloc[-1]
-prev = df.iloc[-2]
+anterior = df.iloc[-2]
 
-score = 0
-if ultimo['RSI'] < 28: score += 2.5
-elif ultimo['RSI'] < 40: score += 1.3
-elif ultimo['RSI'] > 72: score -= 2.5
-elif ultimo['RSI'] > 60: score -= 1.3
+# Cálculo de score (más sensible)
+score = 0.0
 
-if ultimo['EMA9'] > ultimo['EMA21']: score += 1.8
-else: score -= 1.8
+# RSI
+if ultimo['RSI'] < 25: score += 2.8
+elif ultimo['RSI'] < 38: score += 1.5
+elif ultimo['RSI'] > 75: score -= 2.8
+elif ultimo['RSI'] > 62: score -= 1.5
 
-if ultimo['MACD'] > 0 and prev['MACD'] <= 0: score += 1.7
-elif ultimo['MACD'] < 0 and prev['MACD'] >= 0: score -= 1.7
-elif ultimo['MACD'] > 0: score += 0.6
-else: score -= 0.6
+# EMAs
+if ultimo['EMA9'] > ultimo['EMA21']: score += 1.9
+else: score -= 1.9
 
-if ultimo['Stoch'] < 20: score += 1.2
-elif ultimo['Stoch'] > 80: score -= 1.2
+# MACD
+if ultimo['MACD'] > 0 and anterior['MACD'] <= 0: score += 1.8
+elif ultimo['MACD'] < 0 and anterior['MACD'] >= 0: score -= 1.8
+elif ultimo['MACD'] > 0: score += 0.7
+else: score -= 0.7
 
-prob_call = max(10, min(90, 50 + score * 7.5))
+# Stochastic
+if ultimo['Stoch'] < 18: score += 1.4
+elif ultimo['Stoch'] > 82: score -= 1.4
+
+# Probabilidades
+prob_call = max(12, min(88, 50 + score * 7.2))
 prob_put = 100 - prob_call
 
-if score >= 2.0:
-    senal, color = "CALL", "#00C853"
-elif score <= -2.0:
+# Señal
+if score >= 2.1:
+    senal, color = "CALL", "#00E676"
+elif score <= -2.1:
     senal, color = "PUT", "#FF1744"
 else:
-    senal, color = "NEUTRAL", "#616161"
+    senal, color = "NEUTRAL", "#546E7A"
 
+# Señal principal
 st.markdown(f"""
-<div class="signal-box" style="background-color:{color};">
-    <div style="font-size:15px; opacity:0.85;">SEÑAL</div>
-    <div style="font-size:44px; margin:6px 0;">{senal}</div>
+<div class="signal-box" style="background: linear-gradient(135deg, {color}, {color}dd);">
+    <div style="font-size:14px; opacity:0.9; letter-spacing:1px;">SEÑAL ACTUAL</div>
+    <div style="font-size:48px; margin:8px 0;">{senal}</div>
 </div>
 """, unsafe_allow_html=True)
 
+# Probabilidades
 p1, p2 = st.columns(2)
 with p1:
     st.markdown(f"""
     <div class="prob-box" style="background-color:#00C853;">
-        CALL<br><span style="font-size:28px;">{prob_call:.0f}%</span>
+        <div style="font-size:14px;">CALL</div>
+        <div style="font-size:30px;">{prob_call:.0f}%</div>
     </div>
     """, unsafe_allow_html=True)
 with p2:
     st.markdown(f"""
-    <div class="prob-box" style="background-color:#FF1744;">
-        PUT<br><span style="font-size:28px;">{prob_put:.0f}%</span>
+    <div class="prob-box" style="background-color:#D50000;">
+        <div style="font-size:14px;">PUT</div>
+        <div style="font-size:30px;">{prob_put:.0f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
+st.write("")
+
+# Métricas
 m1, m2, m3 = st.columns(3)
-precio = f"{ultimo['Close']:.5f}" if "USD=X" in activo else f"{ultimo['Close']:.2f}"
-m1.metric("Precio", precio)
+precio_txt = f"{ultimo['Close']:.5f}" if "USD=X" in activo else f"{ultimo['Close']:.2f}"
+m1.metric("Precio", precio_txt)
 m2.metric("RSI", f"{ultimo['RSI']:.1f}")
 m3.metric("Score", f"{score:.1f}")
 
+# Botón manual
 if st.button("🔄 Actualizar ahora", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-st.markdown("### Gráfico")
+# Gráfico
+st.markdown("##### Gráfico")
 fig = go.Figure()
 
 fig.add_trace(go.Candlestick(
-    x=df.index[-60:],
-    open=df['Open'][-60:],
-    high=df['High'][-60:],
-    low=df['Low'][-60:],
-    close=df['Close'][-60:],
-    increasing_line_color='#00C853',
-    decreasing_line_color='#FF1744'
+    x=df.index[-50:],
+    open=df['Open'][-50:],
+    high=df['High'][-50:],
+    low=df['Low'][-50:],
+    close=df['Close'][-50:],
+    increasing_line_color='#00E676',
+    decreasing_line_color='#FF1744',
+    name="Precio"
 ))
 
-fig.add_trace(go.Scatter(x=df.index[-60:], y=df['EMA9'][-60:], line=dict(color='orange', width=1.3)))
-fig.add_trace(go.Scatter(x=df.index[-60:], y=df['EMA21'][-60:], line=dict(color='#2196F3', width=1.3)))
+fig.add_trace(go.Scatter(
+    x=df.index[-50:], y=df['EMA9'][-50:],
+    line=dict(color='#FFB300', width=1.4), name="EMA 9"
+))
+fig.add_trace(go.Scatter(
+    x=df.index[-50:], y=df['EMA21'][-50:],
+    line=dict(color='#2196F3', width=1.4), name="EMA 21"
+))
 
 fig.update_layout(
-    height=300,
-    margin=dict(l=5, r=5, t=10, b=10),
+    height=290,
+    margin=dict(l=5, r=5, t=15, b=10),
     xaxis_rangeslider_visible=False,
     template="plotly_dark",
     showlegend=False,
-    paper_bgcolor="#0e1117",
-    plot_bgcolor="#0e1117"
+    paper_bgcolor="#0b0e14",
+    plot_bgcolor="#0b0e14",
+    font=dict(color="white")
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-st.caption("Solo educativo • Alto riesgo de pérdida")
+st.caption("Herramienta educativa • No es consejo financiero • Alto riesgo de pérdida")
