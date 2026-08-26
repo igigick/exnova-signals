@@ -5,50 +5,39 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import os
+from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings("ignore")
 
 # ═══════════════════════════════════════════════
-# CONFIGURACIÓN DE PÁGINA
+# CONFIGURACIÓN
 # ═══════════════════════════════════════════════
-st.set_page_config(
-    page_title="Exnova AI Pro",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-REFRESH_DEFAULT = 30
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
-os.makedirs(MODEL_DIR, exist_ok=True)
+st.set_page_config(page_title="Exnova AI Pro", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 
 # ═══════════════════════════════════════════════
-# CSS CUSTOM
+# CSS
 # ═══════════════════════════════════════════════
 st.markdown("""
 <style>
 .stApp{background-color:#0b0e14;color:#e0e0e0}
 .block-container{padding:0.3rem 0.8rem 0rem 0.8rem;max-width:100%}
-.mini-box{padding:6px 4px;border-radius:8px;text-align:center;color:white;font-weight:700;font-size:11px;margin:2px;transition:all 0.3s ease}
+.mini-box{padding:6px 4px;border-radius:8px;text-align:center;color:white;font-weight:700;font-size:11px;margin:2px}
 .metric-mini{background-color:#151a25;padding:4px 2px;border-radius:5px;text-align:center;border:1px solid #1f2636;font-size:10px}
 .disclaimer{font-size:9px;color:#555;text-align:center;padding:2px;margin-top:4px}
 h1,h2,h3,h4,h5,h6,p{margin:0!important;padding:0!important}
 .stSelectbox{margin-bottom:-10px!important}
 .stSelectbox label{font-size:11px!important;margin-bottom:2px!important}
-iframe{height:350px!important}
 .metric-row{display:flex;justify-content:space-between;margin-top:6px;gap:4px}
 .metric-item{flex:1;background:#151a25;border:1px solid #1f2636;border-radius:5px;padding:4px;text-align:center}
 .metric-item .label{font-size:8px;color:#888}
 .metric-item .value{font-size:12px;font-weight:600;color:#e0e0e0}
-.metric-item .hint{font-size:7px;color:#555}
 .history-row{display:flex;gap:4px;overflow-x:auto;padding:4px 0}
 .history-pill{padding:3px 8px;border-radius:12px;font-size:9px;font-weight:600;white-space:nowrap}
 </style>
 """, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════
-# RED NEURONAL MEJORADA (L2, validación, persistencia)
+# RED NEURONAL LIGERA
 # ═══════════════════════════════════════════════
 class NN:
     def __init__(self, inp, hid, out, lr=0.01, l2=0.001):
@@ -58,14 +47,10 @@ class NN:
         self.inp = inp
         self.hid = hid
         self.out = out
-        self._init_weights()
-        self.history = {"loss": [], "val_loss": [], "val_acc": []}
-
-    def _init_weights(self):
-        self.W1 = np.random.randn(self.inp, self.hid) * np.sqrt(2.0 / self.inp)
-        self.b1 = np.zeros((1, self.hid))
-        self.W2 = np.random.randn(self.hid, self.out) * np.sqrt(2.0 / self.hid)
-        self.b2 = np.zeros((1, self.out))
+        self.W1 = np.random.randn(inp, hid) * np.sqrt(2.0 / inp)
+        self.b1 = np.zeros((1, hid))
+        self.W2 = np.random.randn(hid, out) * np.sqrt(2.0 / hid)
+        self.b2 = np.zeros((1, out))
 
     def relu(self, x): return np.maximum(0, x)
     def drelu(self, x): return (x > 0).astype(float)
@@ -75,22 +60,14 @@ class NN:
         return e / np.sum(e, axis=1, keepdims=True)
 
     def forward(self, X):
-        z1 = np.dot(X, self.W1) + self.b1
-        a1 = self.relu(z1)
-        z2 = np.dot(a1, self.W2) + self.b2
-        return self.softmax(z2), a1, z1
+        self._last_z1 = np.dot(X, self.W1) + self.b1
+        self._last_a1 = self.relu(self._last_z1)
+        z2 = np.dot(self._last_a1, self.W2) + self.b2
+        return self.softmax(z2)
 
-    def cross_entropy(self, pred, y):
-        eps = 1e-9
-        return -np.mean(np.sum(y * np.log(pred + eps), axis=1))
-
-    def accuracy(self, pred, y):
-        return np.mean(np.argmax(pred, axis=1) == np.argmax(y, axis=1))
-
-    def train(self, X, y, epochs=50, val_split=0.2, patience=10):
+    def train(self, X, y, epochs=20, val_split=0.2):
         y = np.array(y)
         n = X.shape[0]
-        
         if n > 20 and val_split > 0:
             split_idx = int(n * (1 - val_split))
             idx = np.random.permutation(n)
@@ -100,72 +77,40 @@ class NN:
             X_tr, y_tr = X, y
             X_val, y_val = None, None
 
-        best_val_loss = float("inf")
-        patience_counter = 0
-
-        for epoch in range(epochs):
-            pred, a1, z1 = self.forward(X_tr)
-            loss = self.cross_entropy(pred, y_tr) + self.l2 * (np.sum(self.W1**2) + np.sum(self.W2**2))
-
+        for _ in range(epochs):
+            pred = self.forward(X_tr)
             dz2 = (pred - y_tr) / X_tr.shape[0]
-            dW2 = np.dot(a1.T, dz2) + self.l2 * self.W2
+            dW2 = np.dot(self._last_a1.T, dz2) + self.l2 * self.W2
             db2 = np.sum(dz2, axis=0, keepdims=True)
-            dz1 = np.dot(dz2, self.W2.T) * self.drelu(z1)
+            dz1 = np.dot(dz2, self.W2.T) * self.drelu(self._last_z1)
             dW1 = np.dot(X_tr.T, dz1) + self.l2 * self.W1
             db1 = np.sum(dz1, axis=0, keepdims=True)
-
             self.W2 -= self.lr * dW2
             self.b2 -= self.lr * db2
             self.W1 -= self.lr * dW1
             self.b1 -= self.lr * db1
 
-            if X_val is not None:
-                val_pred, _, _ = self.forward(X_val)
-                val_loss = self.cross_entropy(val_pred, y_val)
-                val_acc = self.accuracy(val_pred, y_val)
-                self.history["val_loss"].append(val_loss)
-                self.history["val_acc"].append(val_acc)
-
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    patience_counter = 0
-                else:
-                    patience_counter += 1
-                    if patience_counter >= patience:
-                        break
-            else:
-                self.history["val_loss"].append(loss)
-                self.history["val_acc"].append(0)
-
-            self.history["loss"].append(loss)
-
-        return self.history
+        if X_val is not None:
+            val_pred = self.forward(X_val)
+            acc = np.mean(np.argmax(val_pred, axis=1) == np.argmax(y_val, axis=1))
+            return acc
+        return 0.0
 
     def predict(self, X):
-        pred, _, _ = self.forward(X)
-        return pred
-
-    def save(self, path):
-        np.savez(path, W1=self.W1, b1=self.b1, W2=self.W2, b2=self.b2,
-                 inp=self.inp, hid=self.hid, out=self.out, lr=self.lr, l2=self.l2)
-
-    @classmethod
-    def load(cls, path):
-        data = np.load(path)
-        nn = cls(int(data["inp"]), int(data["hid"]), int(data["out"]),
-                 float(data["lr"]), float(data["l2"]))
-        nn.W1, nn.b1, nn.W2, nn.b2 = data["W1"], data["b1"], data["W2"], data["b2"]
-        return nn
+        z1 = np.dot(X, self.W1) + self.b1
+        a1 = self.relu(z1)
+        z2 = np.dot(a1, self.W2) + self.b2
+        return self.softmax(z2)
 
 # ═══════════════════════════════════════════════
-# INDICADORES TÉCNICOS
+# INDICADORES
 # ═══════════════════════════════════════════════
 def rsi(s, w=14):
     d = s.diff()
     g = d.where(d > 0, 0)
     l = (-d).where(d < 0, 0)
-    ag = g.rolling(w, min_periods=w).mean()
-    al = l.rolling(w, min_periods=w).mean()
+    ag = g.rolling(w, min_periods=1).mean()
+    al = l.rolling(w, min_periods=1).mean()
     rs = ag / al
     rs = rs.replace([np.inf, -np.inf], 1).fillna(1)
     return 100 - (100 / (1 + rs))
@@ -224,16 +169,12 @@ def indis(df):
     df["VOL"] = df["RET"].rolling(14, min_periods=1).std()
     return df.dropna()
 
-# ═══════════════════════════════════════════════
-# FEATURE ENGINEERING
-# ═══════════════════════════════════════════════
 def feats(df):
     f = pd.DataFrame(index=df.index)
     cs = df["Close"].std()
     cs = cs if cs > 0 else 0.001
     cm = df["Close"].mean()
     cm = cm if cm > 0 else 0.001
-    
     f["r"] = df["RSI"] / 100
     f["m"] = np.tanh(df["MACD"] / cs)
     f["h"] = np.tanh(df["MH"] / cs)
@@ -249,21 +190,17 @@ def feats(df):
     f["rt"] = np.tanh(df["RET"] * 10)
     return f.fillna(0).replace([np.inf, -np.inf], 0)
 
-# ═══════════════════════════════════════════════
-# DATASET BUILDER (umbral adaptativo)
-# ═══════════════════════════════════════════════
 def dataset(df, f, lb=10, horizon=5):
     X, y = [], []
     fa = f.values
     c = df["Close"].values
-    
     atr_mean = df["ATR"].mean()
     price_mean = df["Close"].mean()
     threshold = max(0.001, (atr_mean / price_mean) * 0.5) if price_mean > 0 else 0.003
-    
+    n_features = lb * f.shape[1]
     for i in range(lb, len(fa) - horizon):
         window = fa[i - lb:i].flatten()
-        if len(window) == lb * f.shape[1] and np.isfinite(window).all():
+        if len(window) == n_features and np.isfinite(window).all():
             X.append(window)
             fr = (c[i + horizon] - c[i]) / c[i]
             if fr > threshold:
@@ -275,20 +212,14 @@ def dataset(df, f, lb=10, horizon=5):
     return np.array(X), np.array(y), threshold
 
 # ═══════════════════════════════════════════════
-# DESCARGA DE DATOS
+# DESCARGA CON CACHE
 # ═══════════════════════════════════════════════
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_data(ticker, interval):
     try:
         pm = {"1m": "7d", "5m": "30d", "15m": "60d", "1h": "180d"}
-        df = yf.download(
-            ticker,
-            period=pm.get(interval, "30d"),
-            interval=interval,
-            progress=False,
-            auto_adjust=True,
-            prepost=False
-        )
+        df = yf.download(ticker, period=pm.get(interval, "30d"), interval=interval,
+                         progress=False, auto_adjust=True, prepost=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         for col in ["Open", "High", "Low", "Close", "Volume"]:
@@ -296,27 +227,36 @@ def get_data(ticker, interval):
                 return pd.DataFrame()
         return df.dropna()
     except Exception as e:
-        st.error(f"Error descargando datos: {e}")
         return pd.DataFrame()
 
 # ═══════════════════════════════════════════════
 # SESSION STATE
 # ═══════════════════════════════════════════════
-def init_state():
-    defaults = {
-        "nn": None, "done": False, "fb": False,
-        "last_asset": None, "last_tf": None,
-        "history": [], "refresh": REFRESH_DEFAULT,
-        "paused": False, "train_info": {}, "threshold": 0.003,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-init_state()
+if "nn" not in st.session_state:
+    st.session_state.nn = None
+if "done" not in st.session_state:
+    st.session_state.done = False
+if "fb" not in st.session_state:
+    st.session_state.fb = False
+if "last_asset" not in st.session_state:
+    st.session_state.last_asset = None
+if "last_tf" not in st.session_state:
+    st.session_state.last_tf = None
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "refresh" not in st.session_state:
+    st.session_state.refresh = 60
+if "paused" not in st.session_state:
+    st.session_state.paused = False
+if "train_info" not in st.session_state:
+    st.session_state.train_info = {}
+if "threshold" not in st.session_state:
+    st.session_state.threshold = 0.003
+if "last_signal_ts" not in st.session_state:
+    st.session_state.last_signal_ts = None
 
 # ═══════════════════════════════════════════════
-# HEADER Y SELECTORES
+# HEADER
 # ═══════════════════════════════════════════════
 c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
 
@@ -324,14 +264,8 @@ with c1:
     st.markdown("<h4 style='margin:0;color:#00d2ff'>🧠 Exnova AI Pro</h4>", unsafe_allow_html=True)
 
 with c2:
-    refresh_opt = st.selectbox(
-        "⏱ Refresh",
-        [10, 30, 60, 120, 300],
-        index=[10, 30, 60, 120, 300].index(st.session_state.refresh)
-        if st.session_state.refresh in [10, 30, 60, 120, 300] else 1,
-        label_visibility="collapsed",
-        key="refresh_sel"
-    )
+    refresh_opt = st.selectbox("⏱ Refresh", [30, 60, 120, 300], index=1,
+                               label_visibility="collapsed", key="refresh_sel")
     st.session_state.refresh = refresh_opt
 
 with c3:
@@ -339,27 +273,14 @@ with c3:
     st.session_state.paused = paused
 
 with c4:
-    asset = st.selectbox(
-        "",
-        ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "BTC", "ETH"],
-        index=0,
-        label_visibility="collapsed",
-        key="asset_sel"
-    )
-    am = {
-        "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X",
-        "USDJPY": "USDJPY=X", "AUDUSD": "AUDUSD=X",
-        "BTC": "BTC-USD", "ETH": "ETH-USD"
-    }
+    asset = st.selectbox("", ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "BTC", "ETH"],
+                         index=0, label_visibility="collapsed", key="asset_sel")
+    am = {"EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+          "AUDUSD": "AUDUSD=X", "BTC": "BTC-USD", "ETH": "ETH-USD"}
     ticker = am[asset]
 
-tf = st.selectbox(
-    "Timeframe",
-    ["1m", "5m", "15m", "1h"],
-    index=1,
-    label_visibility="collapsed",
-    key="tf_sel"
-)
+tf = st.selectbox("TF", ["1m", "5m", "15m", "1h"], index=1,
+                  label_visibility="collapsed", key="tf_sel")
 
 if not st.session_state.paused:
     st_autorefresh(interval=st.session_state.refresh * 1000, key="auto_refresh")
@@ -379,7 +300,7 @@ if st.session_state.last_asset != asset or st.session_state.last_tf != tf:
     st.session_state.last_tf = tf
 
 # ═══════════════════════════════════════════════
-# DESCARGAR Y PROCESAR DATOS
+# DATOS
 # ═══════════════════════════════════════════════
 df = get_data(ticker, tf)
 
@@ -397,51 +318,33 @@ f = feats(df)
 # ═══════════════════════════════════════════════
 # ENTRENAMIENTO
 # ═══════════════════════════════════════════════
-model_path = os.path.join(MODEL_DIR, f"{asset}_{tf}.npz")
-
 if not st.session_state.done:
-    st.info("🧠 Entrenando modelo de IA...")
-    try:
-        X, y, threshold = dataset(df, f)
-        st.session_state.threshold = threshold
-        
-        if len(X) > 30:
-            n_features = X.shape[1]
-            hidden = min(12, max(4, n_features // 8))
-            
-            nn = NN(n_features, hidden, 3, lr=0.01, l2=0.001)
-            hist = nn.train(X, y, epochs=100, val_split=0.2, patience=15)
-            
-            st.session_state.nn = nn
-            st.session_state.done = True
-            st.session_state.fb = False
-            st.session_state.train_info = {
-                "samples": len(X),
-                "features": n_features,
-                "hidden": hidden,
-                "epochs_trained": len(hist["loss"]),
-                "final_loss": hist["loss"][-1] if hist["loss"] else None,
-                "final_val_acc": hist["val_acc"][-1] if hist["val_acc"] else None,
-                "threshold": threshold,
-            }
-            nn.save(model_path)
-        else:
-            if os.path.exists(model_path):
-                st.session_state.nn = NN.load(model_path)
+    with st.spinner("🧠 Entrenando modelo..."):
+        try:
+            X, y, threshold = dataset(df, f)
+            st.session_state.threshold = threshold
+
+            if len(X) > 20:
+                n_features = X.shape[1]
+                hidden = min(8, max(4, n_features // 10))
+                nn = NN(n_features, hidden, 3, lr=0.01, l2=0.001)
+                val_acc = nn.train(X, y, epochs=20, val_split=0.2)
+
+                st.session_state.nn = nn
                 st.session_state.done = True
                 st.session_state.fb = False
-                st.session_state.train_info = {"samples": len(X), "loaded": True}
+                st.session_state.train_info = {
+                    "samples": len(X),
+                    "features": n_features,
+                    "hidden": hidden,
+                    "val_acc": val_acc,
+                    "threshold": threshold,
+                }
             else:
                 st.session_state.done = True
                 st.session_state.fb = True
                 st.session_state.train_info = {"samples": len(X), "error": "Muestras insuficientes"}
-    except Exception as e:
-        if os.path.exists(model_path):
-            st.session_state.nn = NN.load(model_path)
-            st.session_state.done = True
-            st.session_state.fb = False
-            st.session_state.train_info = {"loaded": True, "error": str(e)}
-        else:
+        except Exception as e:
             st.session_state.done = True
             st.session_state.fb = True
             st.session_state.train_info = {"error": str(e)}
@@ -455,12 +358,12 @@ if len(fa) >= 10 and st.session_state.nn is not None and not st.session_state.fb
     try:
         inp = fa[-10:].flatten().reshape(1, -1)
         expected = st.session_state.nn.inp
-        
+
         if inp.shape[1] < expected:
             inp = np.pad(inp, ((0, 0), (0, expected - inp.shape[1])), constant_values=0)
         elif inp.shape[1] > expected:
             inp = inp[:, :expected]
-            
+
         p = st.session_state.nn.predict(inp)
         pc = np.argmax(p)
         conf = np.max(p) * 100
@@ -501,33 +404,14 @@ else:
 # PARTE 2 — UI, GRÁFICO, INDICADORES, HISTORIAL
 # ═══════════════════════════════════════════════
 
-# ───────────────────────────────────────────────
-# CAJAS DE SEÑAL
-# ───────────────────────────────────────────────
 b1, b2, b3 = st.columns(3)
 with b1:
-    st.markdown(
-        f'<div class="mini-box" style="background-color:#D50000">'
-        f'<div>PUT</div><div style="font-size:18px">{put_pct:.1f}%</div></div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="mini-box" style="background-color:#D50000"><div>PUT</div><div style="font-size:18px">{put_pct:.1f}%</div></div>', unsafe_allow_html=True)
 with b2:
-    st.markdown(
-        f'<div class="mini-box" style="background-color:{col};box-shadow:0 0 15px {col}40">'
-        f'<div>IA → {sig}</div><div style="font-size:24px">{em}</div>'
-        f'<div style="font-size:10px">{conf:.1f}% confianza</div></div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="mini-box" style="background-color:{col};box-shadow:0 0 15px {col}40"><div>IA → {sig}</div><div style="font-size:24px">{em}</div><div style="font-size:10px">{conf:.1f}% confianza</div></div>', unsafe_allow_html=True)
 with b3:
-    st.markdown(
-        f'<div class="mini-box" style="background-color:#00C853">'
-        f'<div>CALL</div><div style="font-size:18px">{call_pct:.1f}%</div></div>',
-        unsafe_allow_html=True
-    )
+    st.markdown(f'<div class="mini-box" style="background-color:#00C853"><div>CALL</div><div style="font-size:18px">{call_pct:.1f}%</div></div>', unsafe_allow_html=True)
 
-# ───────────────────────────────────────────────
-# MÉTRICAS EN FILA
-# ───────────────────────────────────────────────
 ps = f"{pa:.{dec}f}"
 ss = f"{sl:.{dec}f}" if sl is not None else "—"
 ts = f"{tpv:.{dec}f}" if tpv is not None else "—"
@@ -543,110 +427,52 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ───────────────────────────────────────────────
-# GRÁFICO DE VELAS
-# ───────────────────────────────────────────────
 st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>📊 Gráfico de velas</p>", unsafe_allow_html=True)
 
 dp = df.tail(80).copy()
-fig = make_subplots(
-    rows=2, cols=1,
-    shared_xaxes=True,
-    vertical_spacing=0.03,
-    row_heights=[0.78, 0.22]
-)
+fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.78, 0.22])
 
 fig.add_trace(go.Candlestick(
-    x=dp.index,
-    open=dp["Open"],
-    high=dp["High"],
-    low=dp["Low"],
-    close=dp["Close"],
-    increasing_line_color="#00E676",
-    decreasing_line_color="#FF1744",
-    increasing_fillcolor="#00E676",
-    decreasing_fillcolor="#FF1744",
-    line=dict(width=1),
-    name="Precio"
+    x=dp.index, open=dp["Open"], high=dp["High"], low=dp["Low"], close=dp["Close"],
+    increasing_line_color="#00E676", decreasing_line_color="#FF1744",
+    increasing_fillcolor="#00E676", decreasing_fillcolor="#FF1744",
+    line=dict(width=1), name="Precio"
 ), row=1, col=1)
 
-fig.add_trace(go.Scatter(
-    x=dp.index, y=dp["E12"],
-    mode="lines",
-    line=dict(color="#FFB300", width=1.2),
-    name="EMA 12"
-), row=1, col=1)
+fig.add_trace(go.Scatter(x=dp.index, y=dp["E12"], mode="lines",
+    line=dict(color="#FFB300", width=1.2), name="EMA 12"), row=1, col=1)
+fig.add_trace(go.Scatter(x=dp.index, y=dp["E26"], mode="lines",
+    line=dict(color="#42A5F5", width=1.2), name="EMA 26"), row=1, col=1)
 
-fig.add_trace(go.Scatter(
-    x=dp.index, y=dp["E26"],
-    mode="lines",
-    line=dict(color="#42A5F5", width=1.2),
-    name="EMA 26"
-), row=1, col=1)
-
-fig.add_trace(go.Scatter(
-    x=dp.index, y=dp["BU"],
-    mode="lines",
-    line=dict(color="rgba(255,255,255,0.15)", width=1),
-    showlegend=False,
-    name="BB Sup"
-), row=1, col=1)
-
-fig.add_trace(go.Scatter(
-    x=dp.index, y=dp["BL"],
-    mode="lines",
-    line=dict(color="rgba(255,255,255,0.15)", width=1),
-    fill="tonexty",
-    fillcolor="rgba(255,255,255,0.04)",
-    showlegend=False,
-    name="BB Inf"
-), row=1, col=1)
+fig.add_trace(go.Scatter(x=dp.index, y=dp["BU"], mode="lines",
+    line=dict(color="rgba(255,255,255,0.15)", width=1), showlegend=False), row=1, col=1)
+fig.add_trace(go.Scatter(x=dp.index, y=dp["BL"], mode="lines",
+    line=dict(color="rgba(255,255,255,0.15)", width=1), fill="tonexty",
+    fillcolor="rgba(255,255,255,0.04)", showlegend=False), row=1, col=1)
 
 if sig != "NEUTRAL" and sl is not None:
-    fig.add_hline(
-        y=sl, line_dash="dash", line_color="#FF1744",
+    fig.add_hline(y=sl, line_dash="dash", line_color="#FF1744",
         annotation_text="SL", annotation_position="right",
-        annotation_font_size=9, annotation_font_color="#FF1744",
-        row=1, col=1
-    )
-    fig.add_hline(
-        y=tpv, line_dash="dash", line_color="#00E676",
+        annotation_font_size=9, annotation_font_color="#FF1744", row=1, col=1)
+    fig.add_hline(y=tpv, line_dash="dash", line_color="#00E676",
         annotation_text="TP", annotation_position="right",
-        annotation_font_size=9, annotation_font_color="#00E676",
-        row=1, col=1
-    )
+        annotation_font_size=9, annotation_font_color="#00E676", row=1, col=1)
 
-vc = ["#FF1744" if dp["Close"].iloc[i] < dp["Open"].iloc[i] else "#00E676"
-      for i in range(len(dp))]
-fig.add_trace(go.Bar(
-    x=dp.index, y=dp["Volume"],
-    marker_color=vc,
-    showlegend=False,
-    name="Volumen"
-), row=2, col=1)
+vc = ["#FF1744" if dp["Close"].iloc[i] < dp["Open"].iloc[i] else "#00E676" for i in range(len(dp))]
+fig.add_trace(go.Bar(x=dp.index, y=dp["Volume"], marker_color=vc, showlegend=False), row=2, col=1)
 
 fig.update_layout(
-    height=380,
-    margin=dict(l=0, r=0, t=2, b=0),
+    height=380, margin=dict(l=0, r=0, t=2, b=0),
     xaxis_rangeslider_visible=False,
-    template="plotly_dark",
-    paper_bgcolor="#0b0e14",
-    plot_bgcolor="#0b0e14",
-    showlegend=False,
-    xaxis=dict(showgrid=False, fixedrange=True, showticklabels=True,
-               color="#888", tickfont=dict(size=8)),
-    yaxis=dict(showgrid=True, gridcolor="#1f2636", fixedrange=True,
-               color="#888", side="right", tickfont=dict(size=8)),
-    yaxis2=dict(showgrid=False, fixedrange=True, color="#888",
-                side="right", tickfont=dict(size=8)),
+    template="plotly_dark", paper_bgcolor="#0b0e14", plot_bgcolor="#0b0e14", showlegend=False,
+    xaxis=dict(showgrid=False, fixedrange=True, showticklabels=True, color="#888", tickfont=dict(size=8)),
+    yaxis=dict(showgrid=True, gridcolor="#1f2636", fixedrange=True, color="#888", side="right", tickfont=dict(size=8)),
+    yaxis2=dict(showgrid=False, fixedrange=True, color="#888", side="right", tickfont=dict(size=8)),
     font=dict(color="white", size=9)
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key="chart")
 
-# ───────────────────────────────────────────────
-# INDICADORES EN FILA
-# ───────────────────────────────────────────────
 st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>📋 Indicadores técnicos</p>", unsafe_allow_html=True)
 
 i1, i2, i3, i4, i5 = st.columns(5)
@@ -660,17 +486,8 @@ inds = [
 
 for col, (n, v, d) in zip([i1, i2, i3, i4, i5], inds):
     with col:
-        st.markdown(
-            f'<div class="metric-mini">'
-            f'<div style="font-size:8px;color:#888">{n}</div>'
-            f'<div style="font-size:13px;font-weight:600">{v}</div>'
-            f'<div style="font-size:7px;color:#555">{d}</div></div>',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<div class="metric-mini"><div style="font-size:8px;color:#888">{n}</div><div style="font-size:13px;font-weight:600">{v}</div><div style="font-size:7px;color:#555">{d}</div></div>', unsafe_allow_html=True)
 
-# ───────────────────────────────────────────────
-# INFO DEL MODELO
-# ───────────────────────────────────────────────
 info = st.session_state.train_info
 fb = st.session_state.fb
 
@@ -687,26 +504,17 @@ st.markdown(f"""
 
 with st.expander("🔧 Detalles del modelo", expanded=False):
     if info.get("samples"):
-        st.write(f"**Muestras de entrenamiento:** {info['samples']}")
+        st.write(f"**Muestras:** {info['samples']}")
     if info.get("features"):
         st.write(f"**Features:** {info['features']}")
     if info.get("hidden"):
         st.write(f"**Neuronas ocultas:** {info['hidden']}")
-    if info.get("epochs_trained"):
-        st.write(f"**Épocas entrenadas:** {info['epochs_trained']}")
-    if info.get("final_val_acc") is not None:
-        st.write(f"**Accuracy de validación:** {info['final_val_acc']*100:.1f}%")
-    if info.get("final_loss") is not None:
-        st.write(f"**Loss final:** {info['final_loss']:.4f}")
-    if info.get("loaded"):
-        st.write("📦 Modelo cargado desde disco")
+    if info.get("val_acc") is not None:
+        st.write(f"**Val accuracy:** {info['val_acc']*100:.1f}%")
     if info.get("error"):
         st.write(f"❌ Error: {info['error']}")
 
-# ───────────────────────────────────────────────
-# HISTORIAL DE SEÑALES
-# ───────────────────────────────────────────────
-if "last_signal_ts" not in st.session_state or st.session_state.last_signal_ts != str(dp.index[-1]):
+if st.session_state.last_signal_ts != str(dp.index[-1]):
     st.session_state.history.append({
         "time": datetime.now().strftime("%H:%M:%S"),
         "signal": sig,
@@ -723,19 +531,7 @@ if st.session_state.history:
     pills = []
     for h in reversed(st.session_state.history[-10:]):
         sig_color = {"PUT": "#FF1744", "CALL": "#00E676", "NEUTRAL": "#546E7A"}[h["signal"]]
-        pills.append(
-            f'<span class="history-pill" style="background:{sig_color}30;color:{sig_color};border:1px solid {sig_color}60">'
-            f'{h["time"]} {h["signal"]} {h["conf"]:.0f}%</span>'
-        )
+        pills.append(f'<span class="history-pill" style="background:{sig_color}30;color:{sig_color};border:1px solid {sig_color}60">{h["time"]} {h["signal"]} {h["conf"]:.0f}%</span>')
     st.markdown(f'<div class="history-row">{" ".join(pills)}</div>', unsafe_allow_html=True)
 
-# ───────────────────────────────────────────────
-# DISCLAIMER
-# ───────────────────────────────────────────────
-st.markdown(
-    '<div class="disclaimer">'
-    '⚠️ Este software es de carácter educativo. La IA entrenada con datos históricos '
-    'NO garantiza resultados futuros. El trading conlleva riesgo significativo de pérdida. '
-    'No constituye asesoramiento financiero.</div>',
-    unsafe_allow_html=True
-)
+st.markdown('<div class="disclaimer">⚠️ Software educativo. La IA no garantiza resultados. Trading de alto riesgo.</div>', unsafe_allow_html=True)
