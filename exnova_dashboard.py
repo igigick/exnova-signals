@@ -15,13 +15,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilos CSS optimizados
+# Estilos CSS para liberar los bloqueos de scroll y mejorar la fluidez táctil en móviles
 st.markdown(
     """
 <style>
     .stApp {
         background-color: #0b0e14;
         color: white;
+        overflow-anchor: none;
     }
     .signal-box {
         padding: 24px 12px;
@@ -38,6 +39,10 @@ st.markdown(
         color: white;
         font-weight: 600;
     }
+    /* Permite que los contenedores no capturen el scroll vertical del body */
+  [data-testid="stVerticalBlock"] {
+        touch-action: pan-y;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -48,7 +53,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Selectores globales (fuera del fragmento para que el usuario pueda cambiar de activo tranquilamente)
+# Selectores globales fuera del fragmento
 col1, col2 = st.columns(2)
 with col1:
     activo = st.selectbox(
@@ -75,7 +80,7 @@ def obtener_datos(ticker, interval):
     return pd.DataFrame()
 
 
-# FRAGMENTO AUTOMÁTICO: Solo se recarga esta parte cada 5 segundos sin afectar el scroll ni bloquear la página
+# FRAGMENTO AUTOMÁTICO cada 5 segundos
 @st.fragment(run_every=5)
 def renderizar_panel_senales(ticker, tf):
   st.caption(
@@ -194,7 +199,7 @@ def renderizar_panel_senales(ticker, tf):
   m2.metric("RSI", f"{ultimo['RSI']:.1f}")
   m3.metric("Score", f"{score:.1f}")
 
-  # Gráfico optimizado
+  # Gráfico optimizado con manejo de eventos táctiles liberados
   st.markdown("##### Gráfico")
 
   df_plot = df.tail(40).copy()
@@ -236,20 +241,20 @@ def renderizar_panel_senales(ticker, tf):
   )
 
   fig.update_layout(
-      height=300,
-      margin=dict(l=5, r=5, t=15, b=10),
+      height=280,
+      margin=dict(l=5, r=5, t=10, b=5),
       xaxis_rangeslider_visible=False,
       template="plotly_dark",
       showlegend=False,
       paper_bgcolor="#0b0e14",
       plot_bgcolor="#0b0e14",
       xaxis=dict(
-          showgrid=False, fixedrange=True, showticklabels=True, color="#888"
+          showgrid=False, fixedrange=False, showticklabels=True, color="#888"
       ),
       yaxis=dict(
           showgrid=True,
           gridcolor="#1f1f1f",
-          fixedrange=True,
+          fixedrange=False,
           color="#888",
           side="right",
       ),
@@ -257,11 +262,13 @@ def renderizar_panel_senales(ticker, tf):
   )
 
   st.plotly_chart(
-      fig, use_container_width=True, config={"displayModeBar": False}
+      fig,
+      use_container_width=True,
+      config={"displayModeBar": False, "scrollZoom": False},
   )
 
   st.caption("Herramienta educativa • No es consejo financiero")
 
 
-# Llamar al fragmento pasando el activo y el timeframe seleccionados
+# Renderizar el panel interactivo
 renderizar_panel_senales(activo, timeframe)
