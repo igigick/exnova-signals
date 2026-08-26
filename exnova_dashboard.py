@@ -1,10 +1,9 @@
 from datetime import datetime
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
 import ta
 import warnings
-import yfinance as yf
-import streamlit as st
 
 warnings.filterwarnings("ignore")
 
@@ -92,22 +91,34 @@ def renderizar_panel_senales(ticker, tf):
     st.error("No se pudieron cargar los datos. Prueba otro activo o timeframe.")
     return
 
-  # Indicadores técnicos
-  df["RSI"] = ta.momentum.rsi(df["Close"], window=7)
-  df["EMA9"] = ta.trend.ema_indicator(df["Close"], window=9)
-  df["EMA21"] = ta.trend.ema_indicator(df["Close"], window=21)
-  df["MACD"] = ta.trend.macd_diff(
-      df["Close"], window_slow=16, window_fast=8
-  )
-  df["Stoch"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"], window=8)
-  df = df.dropna()
+  # Indicadores técnicos seguros
+  try:
+    df["RSI"] = ta.momentum.rsi(df["Close"], window=7)
+    df["EMA9"] = ta.trend.ema_indicator(df["Close"], window=9)
+    df["EMA21"] = ta.trend.ema_indicator(df["Close"], window=21)
+    df["MACD"] = ta.trend.macd_diff(
+        df["Close"], window_slow=16, window_fast=8
+    )
+    df["Stoch"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"], window=8)
+    df = df.dropna()
+  except Exception as e:
+    st.error(f"Error al calcular indicadores: {e}")
+    return
 
   if len(df) < 2:
     st.warning("Datos insuficientes tras calcular indicadores.")
     return
 
-  ultimo = df.iloc[-1]
-  anterior = df.iloc[-2]
+  # Validación de índices de manera segura por si la tabla cambia de tamaño
+  try:
+    ultimo = df.iloc[-1]
+    anterior = df.iloc[-2]
+  except IndexError:
+    st.error(
+        "Error de índice en los datos históricos (IndexOutOfBoundsException"
+        " prevenido)."
+    )
+    return
 
   # Cálculo de Score
   score = 0.0
