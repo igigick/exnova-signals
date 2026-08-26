@@ -16,8 +16,28 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Actualización automática ajustada a 15 segundos para evitar bloqueos de la API de Yahoo Finance
-st_autorefresh(interval=15 * 1000, key="auto_refresh")
+# Refresco original a 5 segundos
+st_autorefresh(interval=5 * 1000, key="auto_refresh")
+
+# Script para recordar y mantener la posición del scroll del usuario entre recargas
+st.markdown(
+    """
+<script>
+    // Guardar la posición del scroll antes de que la página se recargue
+    window.addEventListener('beforeunload', function () {
+        localStorage.setItem('scrollPosition', window.scrollY);
+    });
+
+    // Restaurar la posición del scroll justo después de cargar la página
+    window.addEventListener('load', function () {
+        if (localStorage.getItem('scrollPosition') !== null) {
+            window.scrollTo(0, parseInt(localStorage.getItem('scrollPosition')));
+        }
+    });
+</script>
+""",
+    unsafe_allow_html=True,
+)
 
 # Estilos CSS optimizados
 st.markdown(
@@ -51,9 +71,7 @@ st.markdown(
     "<h2 style='text-align:center; margin-bottom:4px;'>Exnova Signals</h2>",
     unsafe_allow_html=True,
 )
-st.caption(
-    f"Actualización cada 15 segundos • {datetime.now().strftime('%H:%M:%S')}"
-)
+st.caption(f"Actualización cada 5 segundos • {datetime.now().strftime('%H:%M:%S')}")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -66,8 +84,8 @@ with col2:
     timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1)
 
 
-# Caché optimizada con TTL de 15 segundos para proteger las peticiones
-@st.cache_data(ttl=15, show_spinner=False)
+# Caché sincronizada a 4 segundos para optimizar la velocidad con los 5s de refresco
+@st.cache_data(ttl=4, show_spinner=False)
 def obtener_datos(ticker, interval):
   try:
     period_map = {"1m": "1d", "5m": "5d", "15m": "10d"}
