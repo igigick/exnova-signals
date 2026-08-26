@@ -149,4 +149,23 @@ fig.add_trace(go.Candlestick(
     high=df['High'][-60:],
     low=df['Low'][-60:],
     close=df['Close'][-60:],
-    increasing_line_color='#
+    increasing_line_color='#00C853',
+    decreasing_line_color='#FF1744'
+))
+
+fig.add_trace(go.Scatter(x=df.index[-60:], y=df['EMA9'][-60:], line=dict(color='orange', width=1.3), name="EMA9"))
+fig.add_trace(go.Scatter(x=df.index[-60:], y=df['EMA21'][-60:], line=dict(color='#2196F3', width=1.3), name="EMA21"))
+
+fig.update_layout(
+    height=300,
+    margin=dict(l=5, r=5, t=10, b=10),
+    xaxis_rangeslider_visible=False,
+    template="plotly_dark",
+    showlegend=False,
+    paper_bgcolor="#0e1117",
+    plot_bgcolor="#0e1117"
+)
+
+st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+st.caption("Solo educativo • Alto riesgo de pérdida")
