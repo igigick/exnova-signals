@@ -89,8 +89,11 @@ def calcular_indicadores(df):
     df["MACD"] = ta.trend.macd(df["Close"])
     df["MACD_Signal"] = ta.trend.macd_signal(df["Close"])
     df["MACD_Hist"] = ta.trend.macd_diff(df["Close"])
+    
+    # Estocástico compatible: %K con ta, %D como SMA manual
     df["Stoch_K"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"], window=14, smooth_window=3)
-    df["Stoch_D"] = ta.momentum.stoch_signal(df["High"], df["Low"], df["Close"], window=14, smooth1=3, smooth2=3)
+    df["Stoch_D"] = df["Stoch_K"].rolling(window=3, min_periods=1).mean()
+    
     df["ATR"] = ta.volatility.average_true_range(df["High"], df["Low"], df["Close"], window=14)
     df["BB_Upper"] = ta.volatility.bollinger_hband(df["Close"], window=20, window_dev=2)
     df["BB_Lower"] = ta.volatility.bollinger_lband(df["Close"], window=20, window_dev=2)
