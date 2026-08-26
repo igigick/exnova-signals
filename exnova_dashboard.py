@@ -64,7 +64,7 @@ with col2:
     timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1)
 
 
-# Caché agresiva de alta velocidad (TTL de 2 segundos para tragar datos en tiempo real)
+# Caché agresiva de alta velocidad (TTL de 2 segundos para datos en tiempo real)
 @st.cache_data(ttl=2, show_spinner=False)
 def obtener_datos(ticker, interval):
   try:
@@ -79,7 +79,7 @@ def obtener_datos(ticker, interval):
     return pd.DataFrame()
 
 
-# FRAGMENTO ULTRA-RÁPIDO cada 3 segundos (Aprovechando mayor consumo de RAM para fluidez total)
+# FRAGMENTO ULTRA-RÁPIDO cada 3 segundos
 @st.fragment(run_every=3)
 def renderizar_panel_senales(ticker, tf):
   st.caption(
@@ -260,7 +260,6 @@ def renderizar_panel_senales(ticker, tf):
       font=dict(color="white", size=11),
   )
 
-  # Clave estática controlada para reciclar memoria del DOM sin saturar la pestaña
   st.plotly_chart(
       fig,
       use_container_width=True,
