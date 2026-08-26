@@ -8,7 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings("ignore")
 
-st.set_page_config(page_title="Exnova Neural", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Exnova AI", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 REFRESH_INTERVAL = 10
 st_autorefresh(interval=REFRESH_INTERVAL * 1000, key="auto_refresh")
 
@@ -93,8 +93,6 @@ def indis(df):
     df["CH"]=chop(df)
     df["RET"]=df["Close"].pct_change()
     df["VOL"]=df["RET"].rolling(14,1).std()
-    df["PE12"]=df["Close"]/df["E12"]-1
-    df["PE26"]=df["Close"]/df["E26"]-1
     return df.dropna()
 
 def feats(df):
@@ -104,14 +102,14 @@ def feats(df):
     f["h"]=np.tanh(df["MH"]/df["Close"].std())
     f["k"]=df["SK"]/100
     f["d"]=df["SD"]/100
+    f["e12"]=(df["Close"]/df["E12"]-1)*10
+    f["e26"]=(df["Close"]/df["E26"]-1)*10
     f["a"]=np.tanh(df["ATR"]/df["Close"].mean())
-    f["b"]=np.tanh(df["BW"]/10)
+    f["bb"]=(df["Close"]-(df["BU"]+df["BL"])/2)/(df["BU"]-df["BL"])*2
     f["c"]=df["CH"]/100
     f["v"]=np.tanh(df["VOL"]*10)
-    f["p1"]=np.tanh(df["PE12"]*10)
-    f["p2"]=np.tanh(df["PE26"]*10)
     f["rt"]=np.tanh(df["RET"]*10)
-    return f.fillna(0.5)
+    return f.fillna(0)
 
 def dataset(df,f,lb=10):
     X,y=[],[];fa=f.values;c=df["Close"].values
@@ -121,11 +119,11 @@ def dataset(df,f,lb=10):
         y.append([0,1,0] if fr>0.003 else [1,0,0] if fr<-0.003 else [0,0,1])
     return np.array(X),np.array(y)
 
-if "nn" not in st.session_state:st.session_state.nn=NN(120,32,3,0.005)
+if "nn" not in st.session_state:st.session_state.nn=NN(120,24,3,0.005)
 if "done" not in st.session_state:st.session_state.done=False
 
 c1,c2,c3=st.columns([2,3,2])
-with c1:st.markdown("<h4 style='margin:0'>🧠 Exnova Neural</h4>",unsafe_allow_html=True)
+with c1:st.markdown("<h4 style='margin:0'>🧠 Exnova AI</h4>",unsafe_allow_html=True)
 with c2:st.caption(f"⏱ {REFRESH_INTERVAL}s • {datetime.now().strftime('%H:%M:%S')}")
 with c3:
     a=st.selectbox("",["EURUSD","GBPUSD","USDJPY","AUDUSD","BTC","ETH"],0,label_visibility="collapsed")
@@ -151,7 +149,7 @@ if len(df)<60:st.error("❌ Insuficiente");st.stop()
 
 f=feats(df)
 if not st.session_state.done:
-    with st.spinner("🧠 Entrenando..."):
+    with st.spinner("🧠 Entrenando IA..."):
         X,y=dataset(df,f)
         if len(X)>50:st.session_state.nn.train(X,y,200);st.session_state.done=True;st.session_state.n=len(X)
         else:st.session_state.done=True;st.session_state.n=0
@@ -159,7 +157,7 @@ if not st.session_state.done:
 fa=f.values
 if len(fa)>=10:
     inp=fa[-10:].flatten().reshape(1,-1)
-    if inp.shape[1]<120:inp=np.pad(inp,((0,0),(0,120-inp.shape[1])),'constant',constant_values=0.5)
+    if inp.shape[1]<120:inp=np.pad(inp,((0,0),(0,120-inp.shape[1])),'constant',constant_values=0)
     elif inp.shape[1]>120:inp=inp[:,:120]
     p=st.session_state.nn.forward(inp)
     pc=np.argmax(p);conf=np.max(p)*100
@@ -216,6 +214,6 @@ inds=[
 for col,(n,v,d) in zip([i1,i2,i3,i4,i5],inds):
     with col:st.markdown(f'<div class="metric-card"><div style="font-size:9px;color:#888">{n}</div><div style="font-size:13px;font-weight:600">{v}</div><div style="font-size:8px;color:#555">{d}</div></div>',unsafe_allow_html=True)
 
-st.markdown(f'<div style="background:linear-gradient(135deg,#0f2027,#203a43);border:1px solid #00d2ff;padding:6px;border-radius:6px;margin:4px 0;font-size:10px"><p style="margin:0;color:#00d2ff"><b>🧬 IA:</b> 120→32→3 | Choppiness: {u.CH:.1f} | {"TENDENCIA" if u.CH<38 else "LATERAL" if u.CH>62 else "TRANSICIÓN"}</p><p style="margin:0;color:#888;font-size:9px">Choppiness: 0-38=tendencia, 38-62=transición, 62-100=lateral</p></div>',unsafe_allow_html=True)
+st.markdown(f'<div style="background:linear-gradient(135deg,#0f2027,#203a43);border:1px solid #00d2ff;padding:6px;border-radius:6px;margin:4px 0;font-size:10px"><p style="margin:0;color:#00d2ff"><b>🧬 IA Neural:</b> 12 indicadores → 24 neuronas → CALL/PUT/NEUTRAL</p><p style="margin:0;color:#888;font-size:9px">Entrena con RSI+EMA+MACD+Stoch+BB+ATR+Chop+Vol+Retornos | Choppiness: {u.CH:.1f} | {"TENDENCIA" if u.CH<38 else "LATERAL" if u.CH>62 else "TRANSICIÓN"}</p></div>',unsafe_allow_html=True)
 
 st.markdown('<div class="disclaimer">⚠️ IA propia desde cero con Numpy • Sin ChatGPT • Alto riesgo</div>',unsafe_allow_html=True)
