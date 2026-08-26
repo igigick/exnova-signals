@@ -8,6 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings("ignore")
 
+# Configuración de la página
 st.set_page_config(
     page_title="Exnova Signals",
     page_icon="📱",
@@ -15,9 +16,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ========== ACTUALIZACIÓN CADA 5 SEGUNDOS ==========
+# Actualización automática cada 5 segundos
 st_autorefresh(interval=5 * 1000, key="auto_refresh")
 
+# Estilos
 st.markdown("""
 <style>
     .stApp {
@@ -42,9 +44,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Título
 st.markdown("<h2 style='text-align:center; margin-bottom:4px;'>Exnova Signals</h2>", unsafe_allow_html=True)
 st.caption(f"Actualización cada 5 segundos • {datetime.now().strftime('%H:%M:%S')}")
 
+# Selectores
 col1, col2 = st.columns(2)
 with col1:
     activo = st.selectbox(
@@ -59,7 +63,8 @@ with col2:
         index=1
     )
 
-@st.cache_data(ttl=4, show_spinner=False)
+# Obtener datos (cache corto)
+@st.cache_data(ttl=3, show_spinner=False)
 def obtener_datos(ticker, interval):
     try:
         period_map = {"1m": "1d", "5m": "5d", "15m": "10d"}
@@ -76,6 +81,7 @@ if df.empty or len(df) < 30:
     st.error("No se pudieron cargar los datos. Prueba otro activo o timeframe.")
     st.stop()
 
+# Indicadores técnicos
 df["RSI"] = ta.momentum.rsi(df["Close"], window=7)
 df["EMA9"] = ta.trend.ema_indicator(df["Close"], window=9)
 df["EMA21"] = ta.trend.ema_indicator(df["Close"], window=21)
@@ -86,6 +92,7 @@ df = df.dropna()
 ultimo = df.iloc[-1]
 anterior = df.iloc[-2]
 
+# Cálculo del score
 score = 0.0
 
 if ultimo["RSI"] < 25:
@@ -116,9 +123,11 @@ if ultimo["Stoch"] < 18:
 elif ultimo["Stoch"] > 82:
     score -= 1.4
 
+# Probabilidades
 prob_call = max(12, min(88, 50 + score * 7.2))
 prob_put = 100 - prob_call
 
+# Señal
 if score >= 2.1:
     senal = "CALL"
     color = "#00E676"
@@ -129,6 +138,7 @@ else:
     senal = "NEUTRAL"
     color = "#546E7A"
 
+# Señal grande
 st.markdown(f"""
 <div class="signal-box" style="background-color:{color};">
     <div style="font-size:14px; opacity:0.9;">SEÑAL ACTUAL</div>
@@ -136,6 +146,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Probabilidades
 p1, p2 = st.columns(2)
 with p1:
     st.markdown(f"""
@@ -154,18 +165,18 @@ with p2:
 
 st.write("")
 
+# Métricas
 m1, m2, m3 = st.columns(3)
 precio = f"{ultimo['Close']:.5f}" if "USD=X" in activo else f"{ultimo['Close']:.2f}"
 m1.metric("Precio", precio)
 m2.metric("RSI", f"{ultimo['RSI']:.1f}")
 m3.metric("Score", f"{score:.1f}")
 
-if st.button("🔄 Actualizar ahora", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
 
+# ==================== GRÁFICO CORREGIDO ====================
 st.markdown("##### Gráfico")
-df_plot = df.tail(40)
+
+df_plot = df.tail(35).copy()
 
 fig = go.Figure()
 
@@ -183,27 +194,35 @@ fig.add_trace(go.Candlestick(
 fig.add_trace(go.Scatter(
     x=df_plot.index,
     y=df_plot["EMA9"],
-    line=dict(color="#FFB300", width=1.5),
+    line=dict(color="#FFB300", width=1.6),
     name="EMA 9"
 ))
 
 fig.add_trace(go.Scatter(
     x=df_plot.index,
     y=df_plot["EMA21"],
-    line=dict(color="#42A5F5", width=1.5),
+    line=dict(color="#42A5F5", width=1.6),
     name="EMA 21"
 ))
 
 fig.update_layout(
-    height=280,
-    margin=dict(l=0, r=0, t=10, b=10),
+    height=270,
+    margin=dict(l=0, r=0, t=8, b=8),
     xaxis_rangeslider_visible=False,
     template="plotly_dark",
     showlegend=False,
     paper_bgcolor="#0b0e14",
-    plot_bgcolor="#0b0e14"
+    plot_bgcolor="#0b0e14",
+    xaxis=dict(showgrid=False, fixedrange=True),
+    yaxis=dict(showgrid=True, gridcolor="#1a1a1a", fixedrange=True)
 )
 
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+# Clave dinámica para forzar que el gráfico se redibuje
+st.plotly_chart(
+    fig,
+    use_container_width=True,
+    config={"displayModeBar": False},
+    key=f"chart_{datetime.now().strftime('%H%M%S')}"
+)
 
 st.caption("Herramienta educativa • No es consejo financiero • Alto riesgo de pérdida")
