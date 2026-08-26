@@ -8,7 +8,6 @@ from streamlit_autorefresh import st_autorefresh
 import warnings
 warnings.filterwarnings("ignore")
 
-# Configuración de la página
 st.set_page_config(
     page_title="Exnova Signals",
     page_icon="📱",
@@ -44,11 +43,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Título
 st.markdown("<h2 style='text-align:center; margin-bottom:4px;'>Exnova Signals</h2>", unsafe_allow_html=True)
 st.caption(f"Actualización cada 5 segundos • {datetime.now().strftime('%H:%M:%S')}")
 
-# Selectores
 col1, col2 = st.columns(2)
 with col1:
     activo = st.selectbox(
@@ -63,7 +60,6 @@ with col2:
         index=1
     )
 
-# Obtener datos (cache corto)
 @st.cache_data(ttl=3, show_spinner=False)
 def obtener_datos(ticker, interval):
     try:
@@ -81,7 +77,7 @@ if df.empty or len(df) < 30:
     st.error("No se pudieron cargar los datos. Prueba otro activo o timeframe.")
     st.stop()
 
-# Indicadores técnicos
+# Indicadores
 df["RSI"] = ta.momentum.rsi(df["Close"], window=7)
 df["EMA9"] = ta.trend.ema_indicator(df["Close"], window=9)
 df["EMA21"] = ta.trend.ema_indicator(df["Close"], window=21)
@@ -92,7 +88,7 @@ df = df.dropna()
 ultimo = df.iloc[-1]
 anterior = df.iloc[-2]
 
-# Cálculo del score
+# Score
 score = 0.0
 
 if ultimo["RSI"] < 25:
@@ -123,11 +119,9 @@ if ultimo["Stoch"] < 18:
 elif ultimo["Stoch"] > 82:
     score -= 1.4
 
-# Probabilidades
 prob_call = max(12, min(88, 50 + score * 7.2))
 prob_put = 100 - prob_call
 
-# Señal
 if score >= 2.1:
     senal = "CALL"
     color = "#00E676"
@@ -138,7 +132,7 @@ else:
     senal = "NEUTRAL"
     color = "#546E7A"
 
-# Señal grande
+# Señal
 st.markdown(f"""
 <div class="signal-box" style="background-color:{color};">
     <div style="font-size:14px; opacity:0.9;">SEÑAL ACTUAL</div>
@@ -172,14 +166,14 @@ m1.metric("Precio", precio)
 m2.metric("RSI", f"{ultimo['RSI']:.1f}")
 m3.metric("Score", f"{score:.1f}")
 
-
-# ==================== GRÁFICO CORREGIDO ====================
+# ==================== GRÁFICO REDISEÑADO ====================
 st.markdown("##### Gráfico")
 
-df_plot = df.tail(35).copy()
+df_plot = df.tail(40).copy()
 
 fig = go.Figure()
 
+# Velas
 fig.add_trace(go.Candlestick(
     x=df_plot.index,
     open=df_plot["Open"],
@@ -188,36 +182,54 @@ fig.add_trace(go.Candlestick(
     close=df_plot["Close"],
     increasing_line_color="#00E676",
     decreasing_line_color="#FF1744",
+    increasing_fillcolor="#00E676",
+    decreasing_fillcolor="#FF1744",
+    line=dict(width=1),
     name="Precio"
 ))
 
+# EMA 9
 fig.add_trace(go.Scatter(
     x=df_plot.index,
     y=df_plot["EMA9"],
-    line=dict(color="#FFB300", width=1.6),
+    mode="lines",
+    line=dict(color="#FFB300", width=1.8),
     name="EMA 9"
 ))
 
+# EMA 21
 fig.add_trace(go.Scatter(
     x=df_plot.index,
     y=df_plot["EMA21"],
-    line=dict(color="#42A5F5", width=1.6),
+    mode="lines",
+    line=dict(color="#42A5F5", width=1.8),
     name="EMA 21"
 ))
 
 fig.update_layout(
-    height=270,
-    margin=dict(l=0, r=0, t=8, b=8),
+    height=300,
+    margin=dict(l=5, r=5, t=15, b=10),
     xaxis_rangeslider_visible=False,
     template="plotly_dark",
     showlegend=False,
     paper_bgcolor="#0b0e14",
     plot_bgcolor="#0b0e14",
-    xaxis=dict(showgrid=False, fixedrange=True),
-    yaxis=dict(showgrid=True, gridcolor="#1a1a1a", fixedrange=True)
+    xaxis=dict(
+        showgrid=False,
+        fixedrange=True,
+        showticklabels=True,
+        color="#888"
+    ),
+    yaxis=dict(
+        showgrid=True,
+        gridcolor="#1f1f1f",
+        fixedrange=True,
+        color="#888",
+        side="right"
+    ),
+    font=dict(color="white", size=11)
 )
 
-# Clave dinámica para forzar que el gráfico se redibuje
 st.plotly_chart(
     fig,
     use_container_width=True,
