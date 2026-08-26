@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import ta
 import plotly.graph_objects as go
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
@@ -81,22 +80,58 @@ def obtener_datos(ticker, interval):
     except Exception:
         return pd.DataFrame()
 
+def calcular_rsi(series, window=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.rolling(window=window, min_periods=window).mean()
+    avg_loss = loss.rolling(window=window, min_periods=window).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calcular_ema(series, span):
+    return series.ewm(span=span, adjust=False).mean()
+
+def calcular_macd(series, fast=12, slow=26, signal=9):
+    ema_fast = calcular_ema(series, fast)
+    ema_slow = calcular_ema(series, slow)
+    macd_line = ema_fast - ema_slow
+    macd_signal = calcular_ema(macd_line, signal)
+    macd_hist = macd_line - macd_signal
+    return macd_line, macd_signal, macd_hist
+
+def calcular_atr(df, window=14):
+    high_low = df["High"] - df["Low"]
+    high_close = (df["High"] - df["Close"].shift()).abs()
+    low_close = (df["Low"] - df["Close"].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(window=window, min_periods=1).mean()
+    return atr
+
+def calcular_bollinger(series, window=20, num_std=2):
+    sma = series.rolling(window=window, min_periods=1).mean()
+    std = series.rolling(window=window, min_periods=1).std()
+    upper = sma + (std * num_std)
+    lower = sma - (std * num_std)
+    return upper, lower
+
+def calcular_stoch(df, k_window=14, d_window=3):
+    lowest_low = df["Low"].rolling(window=k_window, min_periods=1).min()
+    highest_high = df["High"].rolling(window=k_window, min_periods=1).max()
+    stoch_k = 100 * (df["Close"] - lowest_low) / (highest_high - lowest_low)
+    stoch_d = stoch_k.rolling(window=d_window, min_periods=1).mean()
+    return stoch_k, stoch_d
+
 def calcular_indicadores(df):
     df = df.copy()
-    df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
-    df["EMA12"] = ta.trend.ema_indicator(df["Close"], window=12)
-    df["EMA26"] = ta.trend.ema_indicator(df["Close"], window=26)
-    df["MACD"] = ta.trend.macd(df["Close"])
-    df["MACD_Signal"] = ta.trend.macd_signal(df["Close"])
-    df["MACD_Hist"] = ta.trend.macd_diff(df["Close"])
-    
-    # Estocástico compatible: %K con ta, %D como SMA manual
-    df["Stoch_K"] = ta.momentum.stoch(df["High"], df["Low"], df["Close"], window=14, smooth_window=3)
-    df["Stoch_D"] = df["Stoch_K"].rolling(window=3, min_periods=1).mean()
-    
-    df["ATR"] = ta.volatility.average_true_range(df["High"], df["Low"], df["Close"], window=14)
-    df["BB_Upper"] = ta.volatility.bollinger_hband(df["Close"], window=20, window_dev=2)
-    df["BB_Lower"] = ta.volatility.bollinger_lband(df["Close"], window=20, window_dev=2)
+    df["RSI"] = calcular_rsi(df["Close"], 14)
+    df["EMA12"] = calcular_ema(df["Close"], 12)
+    df["EMA26"] = calcular_ema(df["Close"], 26)
+    df["MACD"], df["MACD_Signal"], df["MACD_Hist"] = calcular_macd(df["Close"])
+    df["Stoch_K"], df["Stoch_D"] = calcular_stoch(df)
+    df["ATR"] = calcular_atr(df, 14)
+    df["BB_Upper"], df["BB_Lower"] = calcular_bollinger(df["Close"])
     df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / df["Close"] * 100
     return df.dropna()
 
@@ -389,3 +424,4 @@ st.markdown("""
     Realiza siempre tu propio análisis antes de operar.
 </div>
 """, unsafe_allow_html=True)
+    
