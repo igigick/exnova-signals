@@ -30,7 +30,6 @@ iframe{height:220px!important}
 </style>
 """, unsafe_allow_html=True)
 
-# === RED NEURONAL DESDE CERO (2 capas) ===
 class NN:
     def __init__(self,inp,hid,out,lr=0.01):
         np.random.seed(42)
@@ -60,7 +59,6 @@ class NN:
             self.W1-=self.lr*dW1;self.b1-=self.lr*db1
         return pred
 
-# === INDICADORES ===
 def rsi(s,w=14):
     d=s.diff();g=d.where(d>0,0);l=(-d).where(d<0,0)
     ag=g.rolling(w,w).mean();al=l.rolling(w,w).mean()
@@ -70,47 +68,62 @@ def macd(s):
     m=ema(s,12)-ema(s,26)
     return m,ema(m,9),m-ema(m,9)
 def atr(df):
-    tr=pd.concat([df.H-df.L,(df.H-df.C.shift()).abs(),(df.L-df.C.shift()).abs()],axis=1).max(axis=1)
+    tr=pd.concat([df["High"]-df["Low"],(df["High"]-df["Close"].shift()).abs(),(df["Low"]-df["Close"].shift()).abs()],axis=1).max(axis=1)
     return tr.rolling(14,1).mean()
 def bb(s):m=s.rolling(20,1).mean();sd=s.rolling(20,1).std();return m+2*sd,m-2*sd
 def stoch(df):
-    ll=df.L.rolling(14,1).min();hh=df.H.rolling(14,1).max()
-    k=100*(df.C-ll)/(hh-ll);return k,k.rolling(3,1).mean()
+    ll=df["Low"].rolling(14,1).min();hh=df["High"].rolling(14,1).max()
+    k=100*(df["Close"]-ll)/(hh-ll);return k,k.rolling(3,1).mean()
 def chop(df):
-    tr=pd.concat([df.H-df.L,(df.H-df.C.shift()).abs(),(df.L-df.C.shift()).abs()],axis=1).max(axis=1)
-    a=tr.rolling(14,1).sum();mx=df.H.rolling(14,1).max();mn=df.L.rolling(14,1).min()
+    tr=pd.concat([df["High"]-df["Low"],(df["High"]-df["Close"].shift()).abs(),(df["Low"]-df["Close"].shift()).abs()],axis=1).max(axis=1)
+    a=tr.rolling(14,1).sum();mx=df["High"].rolling(14,1).max();mn=df["Low"].rolling(14,1).min()
     r=mx-mn;r=r.replace(0,np.nan)
     return (100*np.log10(a/r)/np.log10(14)).fillna(50)
 
 def indis(df):
-    df=df.copy();df["RSI"]=rsi(df.C);df["E12"]=ema(df.C,12);df["E26"]=ema(df.C,26)
-    df["MACD"],df["MS"],df["MH"]=macd(df.C);df["SK"],df["SD"]=stoch(df)
-    df["ATR"]=atr(df);df["BU"],df["BL"]=bb(df.C);df["BW"]=(df.BU-df.BL)/df.C*100
-    df["CH"]=chop(df);df["RET"]=df.C.pct_change();df["VOL"]=df.RET.rolling(14,1).std()
-    df["PE12"]=df.C/df.E12-1;df["PE26"]=df.C/df.E26-1
+    df=df.copy()
+    df["RSI"]=rsi(df["Close"])
+    df["E12"]=ema(df["Close"],12)
+    df["E26"]=ema(df["Close"],26)
+    df["MACD"],df["MS"],df["MH"]=macd(df["Close"])
+    df["SK"],df["SD"]=stoch(df)
+    df["ATR"]=atr(df)
+    df["BU"],df["BL"]=bb(df["Close"])
+    df["BW"]=(df["BU"]-df["BL"])/df["Close"]*100
+    df["CH"]=chop(df)
+    df["RET"]=df["Close"].pct_change()
+    df["VOL"]=df["RET"].rolling(14,1).std()
+    df["PE12"]=df["Close"]/df["E12"]-1
+    df["PE26"]=df["Close"]/df["E26"]-1
     return df.dropna()
 
 def feats(df):
     f=pd.DataFrame(index=df.index)
-    f["r"]=df.RSI/100;f["m"]=np.tanh(df.MACD/df.C.std());f["h"]=np.tanh(df.MH/df.C.std())
-    f["k"]=df.SK/100;f["d"]=df.SD/100;f["a"]=np.tanh(df.ATR/df.C.mean())
-    f["b"]=np.tanh(df.BW/10);f["c"]=df.CH/100;f["v"]=np.tanh(df.VOL*10)
-    f["p1"]=np.tanh(df.PE12*10);f["p2"]=np.tanh(df.PE26*10);f["rt"]=np.tanh(df.RET*10)
+    f["r"]=df["RSI"]/100
+    f["m"]=np.tanh(df["MACD"]/df["Close"].std())
+    f["h"]=np.tanh(df["MH"]/df["Close"].std())
+    f["k"]=df["SK"]/100
+    f["d"]=df["SD"]/100
+    f["a"]=np.tanh(df["ATR"]/df["Close"].mean())
+    f["b"]=np.tanh(df["BW"]/10)
+    f["c"]=df["CH"]/100
+    f["v"]=np.tanh(df["VOL"]*10)
+    f["p1"]=np.tanh(df["PE12"]*10)
+    f["p2"]=np.tanh(df["PE26"]*10)
+    f["rt"]=np.tanh(df["RET"]*10)
     return f.fillna(0.5)
 
 def dataset(df,f,lb=10):
-    X,y=[],[];fa=f.values;c=df.C.values
+    X,y=[],[];fa=f.values;c=df["Close"].values
     for i in range(lb,len(fa)-5):
         X.append(fa[i-lb:i].flatten())
         fr=(c[i+5]-c[i])/c[i]
         y.append([0,1,0] if fr>0.003 else [1,0,0] if fr<-0.003 else [0,0,1])
     return np.array(X),np.array(y)
 
-# === SESSION ===
 if "nn" not in st.session_state:st.session_state.nn=NN(120,32,3,0.005)
 if "done" not in st.session_state:st.session_state.done=False
 
-# === UI ===
 c1,c2,c3=st.columns([2,3,2])
 with c1:st.markdown("<h4 style='margin:0'>🧠 Exnova Neural</h4>",unsafe_allow_html=True)
 with c2:st.caption(f"⏱ {REFRESH_INTERVAL}s • {datetime.now().strftime('%H:%M:%S')}")
@@ -126,12 +139,13 @@ def get(t,i):
         pm={"1m":"5d","5m":"10d","15m":"30d","1h":"60d"}
         df=yf.download(t,period=pm.get(i,"10d"),interval=i,progress=False,auto_adjust=True)
         if isinstance(df.columns,pd.MultiIndex):df.columns=df.columns.get_level_values(0)
-        return df.dropna() if all(c in df.columns for c in ["Open","High","Low","Close","Volume"]) else pd.DataFrame()
+        for c in ["Open","High","Low","Close","Volume"]:
+            if c not in df.columns:return pd.DataFrame()
+        return df.dropna()
     except:return pd.DataFrame()
 
 df=get(a,tf)
 if df.empty or len(df)<80:st.error("❌ Sin datos");st.stop()
-df.columns=[c[0] if isinstance(c,tuple) else c for c in df.columns]
 df=indis(df)
 if len(df)<60:st.error("❌ Insuficiente");st.stop()
 
@@ -167,22 +181,38 @@ with s3:st.markdown(f'<div class="strength-box" style="background-color:#00C853"
 ps=f"{pa:.{dec}f}";ss=f"{sl:.{dec}f}" if sl else "—";ts=f"{tpv:.{dec}f}" if tpv else "—"
 m1,m2,m3,m4,m5,m6=st.columns(6)
 m1.metric("Precio",ps);m2.metric("RSI",f"{u.RSI:.0f}");m3.metric("Chop",f"{u.CH:.0f}");m4.metric("ATR",f"{atr:.{dec}f}");m5.metric("SL",ss);m6.metric("TP",ts)
-
 st.markdown("<p style='font-size:11px;margin:2px 0'>📊 Gráfico</p>",unsafe_allow_html=True)
 dp=df.tail(40).copy()
 fig=go.Figure()
-fig.add_trace(go.Candlestick(x=dp.index,open=dp.Open,high=dp.High,low=dp.Low,close=dp.Close,increasing_line_color="#00E676",decreasing_line_color="#FF1744",increasing_fillcolor="rgba(0,230,118,0.2)",decreasing_fillcolor="rgba(255,23,68,0.2)",line=dict(width=1),name="P"))
-fig.add_trace(go.Scatter(x=dp.index,y=dp.E12,mode="lines",line=dict(color="#FFB300",width=1.2),name="E12"))
-fig.add_trace(go.Scatter(x=dp.index,y=dp.E26,mode="lines",line=dict(color="#42A5F5",width=1.2),name="E26"))
+fig.add_trace(go.Candlestick(
+    x=dp.index,open=dp["Open"],high=dp["High"],low=dp["Low"],close=dp["Close"],
+    increasing_line_color="#00E676",decreasing_line_color="#FF1744",
+    increasing_fillcolor="rgba(0,230,118,0.2)",decreasing_fillcolor="rgba(255,23,68,0.2)",
+    line=dict(width=1),name="P"
+))
+fig.add_trace(go.Scatter(x=dp.index,y=dp["E12"],mode="lines",line=dict(color="#FFB300",width=1.2),name="E12"))
+fig.add_trace(go.Scatter(x=dp.index,y=dp["E26"],mode="lines",line=dict(color="#42A5F5",width=1.2),name="E26"))
 if sig!="NEUTRAL" and sl is not None:
     fig.add_hline(y=sl,line_dash="dash",line_color="#FF1744",annotation_text="SL",annotation_position="right",annotation_font_size=9,annotation_font_color="#FF1744")
     fig.add_hline(y=tpv,line_dash="dash",line_color="#00E676",annotation_text="TP",annotation_position="right",annotation_font_size=9,annotation_font_color="#00E676")
-fig.update_layout(height=180,margin=dict(l=0,r=0,t=5,b=0),xaxis_rangeslider_visible=False,template="plotly_dark",showlegend=False,paper_bgcolor="#0b0e14",plot_bgcolor="#0b0e14",xaxis=dict(showgrid=False,fixedrange=True,showticklabels=True,color="#888",tickfont=dict(size=8)),yaxis=dict(showgrid=True,gridcolor="#1f2636",fixedrange=True,color="#888",side="right",tickfont=dict(size=8)),font=dict(color="white",size=9))
+fig.update_layout(
+    height=180,margin=dict(l=0,r=0,t=5,b=0),xaxis_rangeslider_visible=False,
+    template="plotly_dark",showlegend=False,paper_bgcolor="#0b0e14",plot_bgcolor="#0b0e14",
+    xaxis=dict(showgrid=False,fixedrange=True,showticklabels=True,color="#888",tickfont=dict(size=8)),
+    yaxis=dict(showgrid=True,gridcolor="#1f2636",fixedrange=True,color="#888",side="right",tickfont=dict(size=8)),
+    font=dict(color="white",size=9)
+)
 st.plotly_chart(fig,use_container_width=True,config={"displayModeBar":False},key="chart")
 
 st.markdown("<p style='font-size:11px;margin:2px 0'>📋 Indicadores</p>",unsafe_allow_html=True)
 i1,i2,i3,i4,i5=st.columns(5)
-inds=[("RSI",f"{u.RSI:.0f}","<30|>70"),("MACD",f"{u.MACD:.{dec}f}","Cruce"),("Stoch",f"{u.SK:.0f}","<20|>80"),("Chop",f"{u.CH:.0f}","<38|>62"),("Vol",f"{u.VOL*100:.2f}%","14d")]
+inds=[
+    ("RSI",f"{u.RSI:.0f}","<30|>70"),
+    ("MACD",f"{u.MACD:.{dec}f}","Cruce"),
+    ("Stoch",f"{u.SK:.0f}","<20|>80"),
+    ("Chop",f"{u.CH:.0f}","<38|>62"),
+    ("Vol",f"{u.VOL*100:.2f}%","14d")
+]
 for col,(n,v,d) in zip([i1,i2,i3,i4,i5],inds):
     with col:st.markdown(f'<div class="metric-card"><div style="font-size:9px;color:#888">{n}</div><div style="font-size:13px;font-weight:600">{v}</div><div style="font-size:8px;color:#555">{d}</div></div>',unsafe_allow_html=True)
 
