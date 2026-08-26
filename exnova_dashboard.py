@@ -10,44 +10,42 @@ warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Exnova Signals", page_icon="📱", layout="centered", initial_sidebar_state="collapsed")
 
-# Actualización cada 5 segundos
-st_autorefresh(interval=5000, key="refresh")
+# Actualización cada 12 segundos (más estable)
+st_autorefresh(interval=12000, key="refresh")
 
-# Estilos
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; }
     .signal-box {
-        padding: 22px 10px;
+        padding: 24px 10px;
         border-radius: 16px;
         text-align: center;
-        margin: 12px 0 8px 0;
+        margin: 10px 0;
         color: white;
         font-weight: bold;
     }
     .prob-box {
-        padding: 14px 8px;
+        padding: 16px 8px;
         border-radius: 12px;
         text-align: center;
         color: white;
         font-weight: bold;
+        margin-bottom: 8px;
     }
-    .metric-container { background-color: #1c1c1c; border-radius: 10px; padding: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h2 style='text-align:center; color:white; margin-bottom:5px;'>Exnova Signals</h2>", unsafe_allow_html=True)
-st.caption(f"Actualización automática • {datetime.now().strftime('%H:%M:%S')}")
+st.markdown("<h2 style='text-align:center; color:white;'>Exnova Signals</h2>", unsafe_allow_html=True)
+st.caption(f"Actualizado: {datetime.now().strftime('%H:%M:%S')}")
 
 # Selectores
 c1, c2 = st.columns(2)
 with c1:
-    activo = st.selectbox("Activo", ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "BTC-USD", "ETH-USD", "AAPL"], index=0, label_visibility="collapsed")
+    activo = st.selectbox("Activo", ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "BTC-USD", "ETH-USD"], index=0)
 with c2:
-    timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1, label_visibility="collapsed")
+    timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1)
 
-# Datos
-@st.cache_data(ttl=4)
+@st.cache_data(ttl=10)
 def get_data(ticker, interval):
     period = {"1m": "1d", "5m": "5d", "15m": "10d"}[interval]
     df = yf.download(ticker, period=period, interval=interval, progress=False)
@@ -57,40 +55,51 @@ def get_data(ticker, interval):
 
 df = get_data(activo, timeframe)
 
-if len(df) < 20:
-    st.error("Pocos datos. Cambia de timeframe.")
+if len(df) < 25:
+    st.warning("Pocos datos disponibles. Cambia el timeframe.")
     st.stop()
 
 # Indicadores
 df['RSI'] = ta.momentum.rsi(df['Close'], 7)
 df['EMA9'] = ta.trend.ema_indicator(df['Close'], 9)
 df['EMA21'] = ta.trend.ema_indicator(df['Close'], 21)
-df['MACD'] = ta.trend.macd_diff(df['Close'], 16, 8)
+df['MACD'] = ta.trend.macd_diff(df['Close'], 12, 6)
+df['Stoch'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'], 8)
 df = df.dropna()
 
 ultimo = df.iloc[-1]
 prev = df.iloc[-2]
 
-# Score
+# Score más sensible
 score = 0
-if ultimo['RSI'] < 30: score += 2
-elif ultimo['RSI'] > 70: score -= 2
-elif ultimo['RSI'] < 45: score += 1
-elif ultimo['RSI'] > 55: score -= 1
 
-if ultimo['EMA9'] > ultimo['EMA21']: score += 1.5
-else: score -= 1.5
+# RSI
+if ultimo['RSI'] < 28: score += 2.5
+elif ultimo['RSI'] < 40: score += 1.3
+elif ultimo['RSI'] > 72: score -= 2.5
+elif ultimo['RSI'] > 60: score -= 1.3
 
-if ultimo['MACD'] > 0 and prev['MACD'] <= 0: score += 1.5
-elif ultimo['MACD'] < 0 and prev['MACD'] >= 0: score -= 1.5
+# EMAs
+if ultimo['EMA9'] > ultimo['EMA21']: score += 1.8
+else: score -= 1.8
 
-# Probabilidades
-prob_call = max(8, min(92, 50 + score * 9))
+# MACD
+if ultimo['MACD'] > 0 and prev['MACD'] <= 0: score += 1.7
+elif ultimo['MACD'] < 0 and prev['MACD'] >= 0: score -= 1.7
+elif ultimo['MACD'] > 0: score += 0.6
+else: score -= 0.6
+
+# Stochastic
+if ultimo['Stoch'] < 20: score += 1.2
+elif ultimo['Stoch'] > 80: score -= 1.2
+
+# Probabilidades más dinámicas
+prob_call = max(10, min(90, 50 + score * 7.5))
 prob_put = 100 - prob_call
 
-if score >= 2.2:
+if score >= 2.0:
     senal, color = "CALL", "#00C853"
-elif score <= -2.2:
+elif score <= -2.0:
     senal, color = "PUT", "#FF1744"
 else:
     senal, color = "NEUTRAL", "#616161"
@@ -98,8 +107,8 @@ else:
 # Señal grande
 st.markdown(f"""
 <div class="signal-box" style="background-color:{color};">
-    <div style="font-size:15px; opacity:0.9;">SEÑAL</div>
-    <div style="font-size:42px; margin:4px 0;">{senal}</div>
+    <div style="font-size:15px; opacity:0.85;">SEÑAL</div>
+    <div style="font-size:44px; margin:6px 0;">{senal}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -108,53 +117,36 @@ p1, p2 = st.columns(2)
 with p1:
     st.markdown(f"""
     <div class="prob-box" style="background-color:#00C853;">
-        CALL<br><span style="font-size:26px;">{prob_call:.0f}%</span>
+        CALL<br><span style="font-size:28px;">{prob_call:.0f}%</span>
     </div>
     """, unsafe_allow_html=True)
 with p2:
     st.markdown(f"""
     <div class="prob-box" style="background-color:#FF1744;">
-        PUT<br><span style="font-size:26px;">{prob_put:.0f}%</span>
+        PUT<br><span style="font-size:28px;">{prob_put:.0f}%</span>
     </div>
     """, unsafe_allow_html=True)
 
-st.write("")
-
-# Precio y RSI
+# Métricas
 m1, m2, m3 = st.columns(3)
 precio = f"{ultimo['Close']:.5f}" if "USD=X" in activo else f"{ultimo['Close']:.2f}"
 m1.metric("Precio", precio)
 m2.metric("RSI", f"{ultimo['RSI']:.1f}")
 m3.metric("Score", f"{score:.1f}")
 
-# Gráfico más ligero
+# Botón de refresco manual
+if st.button("🔄 Actualizar ahora", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+# Gráfico ligero
 st.markdown("### Gráfico")
 fig = go.Figure()
 
 fig.add_trace(go.Candlestick(
-    x=df.index[-80:],
-    open=df['Open'][-80:],
-    high=df['High'][-80:],
-    low=df['Low'][-80:],
-    close=df['Close'][-80:],
-    name="Precio",
-    increasing_line_color='#00C853',
-    decreasing_line_color='#FF1744'
-))
-
-fig.add_trace(go.Scatter(x=df.index[-80:], y=df['EMA9'][-80:], name="EMA9", line=dict(color='orange', width=1.2)))
-fig.add_trace(go.Scatter(x=df.index[-80:], y=df['EMA21'][-80:], name="EMA21", line=dict(color='#2196F3', width=1.2)))
-
-fig.update_layout(
-    height=320,
-    margin=dict(l=5, r=5, t=10, b=10),
-    xaxis_rangeslider_visible=False,
-    template="plotly_dark",
-    showlegend=False,
-    paper_bgcolor="#0e1117",
-    plot_bgcolor="#0e1117"
-)
-
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-st.caption("Solo educativo • No es consejo financiero • Alto riesgo")
+    x=df.index[-60:],
+    open=df['Open'][-60:],
+    high=df['High'][-60:],
+    low=df['Low'][-60:],
+    close=df['Close'][-60:],
+    increasing_line_color='#
