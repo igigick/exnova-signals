@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# Estilos CSS para liberar los bloqueos de scroll y mejorar la fluidez táctil en móviles
+# Estilos CSS avanzados para fluidez táctil y rendimiento visual
 st.markdown(
     """
 <style>
@@ -39,8 +39,7 @@ st.markdown(
         color: white;
         font-weight: 600;
     }
-    /* Permite que los contenedores no capturen el scroll vertical del body */
-  [data-testid="stVerticalBlock"] {
+    [data-testid="stVerticalBlock"] {
         touch-action: pan-y;
     }
 </style>
@@ -53,7 +52,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Selectores globales fuera del fragmento
+# Selectores globales
 col1, col2 = st.columns(2)
 with col1:
     activo = st.selectbox(
@@ -65,8 +64,8 @@ with col2:
     timeframe = st.selectbox("Timeframe", ["1m", "5m", "15m"], index=1)
 
 
-# Caché optimizada para los datos
-@st.cache_data(ttl=4, show_spinner=False)
+# Caché agresiva de alta velocidad (TTL de 2 segundos para tragar datos en tiempo real)
+@st.cache_data(ttl=2, show_spinner=False)
 def obtener_datos(ticker, interval):
   try:
     period_map = {"1m": "1d", "5m": "5d", "15m": "10d"}
@@ -80,11 +79,11 @@ def obtener_datos(ticker, interval):
     return pd.DataFrame()
 
 
-# FRAGMENTO AUTOMÁTICO cada 5 segundos
-@st.fragment(run_every=5)
+# FRAGMENTO ULTRA-RÁPIDO cada 3 segundos (Aprovechando mayor consumo de RAM para fluidez total)
+@st.fragment(run_every=3)
 def renderizar_panel_senales(ticker, tf):
   st.caption(
-      f"Actualización automática cada 5s • {datetime.now().strftime('%H:%M:%S')}"
+      f"Modo Alta Frecuencia (3s) • {datetime.now().strftime('%H:%M:%S')}"
   )
 
   df = obtener_datos(ticker, tf)
@@ -199,7 +198,7 @@ def renderizar_panel_senales(ticker, tf):
   m2.metric("RSI", f"{ultimo['RSI']:.1f}")
   m3.metric("Score", f"{score:.1f}")
 
-  # Gráfico optimizado con manejo de eventos táctiles liberados
+  # Gráfico optimizado en tiempo real
   st.markdown("##### Gráfico")
 
   df_plot = df.tail(40).copy()
@@ -261,14 +260,16 @@ def renderizar_panel_senales(ticker, tf):
       font=dict(color="white", size=11),
   )
 
+  # Clave estática controlada para reciclar memoria del DOM sin saturar la pestaña
   st.plotly_chart(
       fig,
       use_container_width=True,
       config={"displayModeBar": False, "scrollZoom": False},
+      key="live_chart",
   )
 
   st.caption("Herramienta educativa • No es consejo financiero")
 
 
-# Renderizar el panel interactivo
+# Ejecutar panel en tiempo real
 renderizar_panel_senales(activo, timeframe)
