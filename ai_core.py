@@ -149,6 +149,7 @@ class DeepNN:
         nn.W3, nn.b3 = data["W3"], data["b3"]
         nn.W4, nn.b4 = data["W4"], data["b4"]
         return nn
+
 def rsi(s, w=14):
     d = s.diff()
     g, l = d.where(d > 0, 0), (-d).where(d < 0, 0)
@@ -157,24 +158,6 @@ def rsi(s, w=14):
     return 100 - (100 / (1 + rs.replace([np.inf, -np.inf], 1).fillna(1)))
 
 def ema(s, p): return s.ewm(span=p, adjust=False).mean()
-def sma(s, p): return s.rolling(p, min_periods=1).mean()
-
-def macd(s):
-    m = ema(s, 12) - ema(s, 26)
-    return m, ema(m, 9), m - ema(m, 9)
-
-def atr(df):
-    h, l, c = df["High"], df["Low"], df["Close"]
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    return tr.rolling(14, min_periods=1).mean()
-
-def bb(s):
-    m = sma(s, 20)
-    sd = s.rolling(20, min_periods=1).std().replace(0, 0.001)
-    return m + 2 * sd, m - 2 * sd, m
-
-def stoch(df):
-    ll = df["Low"].rolling(14,, adjust=False).mean()
 def sma(s, p): return s.rolling(p, min_periods=1).mean()
 
 def macd(s):
@@ -503,6 +486,7 @@ class ExnovaAI:
             self.ready = True; self.fallback = True
             self.info = {"error": str(e)}
             return False
+
     def load_or_train(self, asset, tf, df, f):
         self.asset = asset; self.tf = tf
         loaded = self._load_nn(asset, tf)
