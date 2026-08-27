@@ -30,7 +30,7 @@ st.markdown("""
 .signal-btn.call{background:linear-gradient(135deg,#00c853,#00e676);color:#000}
 .signal-btn.put{background:linear-gradient(135deg,#ff1744,#d50000);color:#fff}
 .signal-btn.neutral{background:linear-gradient(135deg,#455a64,#78909c);color:#fff}
-@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100.02)}100%{transform:scale(1)}}
+@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
 
 .prob-bar-bg{width:100%;height:22px;background:#1a1f2e;border-radius:10px;overflow:hidden;margin:4px 0}
 .prob-bar-fill{height:100%;border-radius:10px;display:flex;align-items:center;justify-content:flex-end;padding-right:8px;font-size:10px;font-weight:700;color:#fff;transition:width 0.8s ease}
@@ -108,6 +108,7 @@ if changed:
     st.session_state.last_asset = asset
     st.session_state.last_tf = tf
     st.session_state.data_hash = None
+
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_data(tkr, interval):
     try:
