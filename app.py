@@ -1,5 +1,6 @@
 """
-📊 EXNOVA AI DASHBOARD v3.1
+📊 EXNOVA AI DASHBOARD v4.0 (Refactorizado)
+Correcciones: hash determinístico, manejo de errores, decimales, robustez
 """
 
 import streamlit as st
@@ -9,7 +10,7 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 from ai_core import *
 
-st.set_page_config(page_title="Exnova AI Pro", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Exnova AI Pro v4", page_icon="🧠", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -28,21 +29,30 @@ h1,h2,h3,h4,h5,h6,p{margin:0!important;padding:0!important}
 .history-row{display:flex;gap:5px;overflow-x:auto;padding:6px 0}
 .history-pill{padding:4px 10px;border-radius:14px;font-size:9px;font-weight:700;white-space:nowrap}
 .reason-tag{font-size:8px;padding:2px 6px;border-radius:4px;background:#0f1525;color:#64b5f6;display:inline-block;margin:1px;border:1px solid #1a2a40}
+.error-box{background:#1a0a0a;border:1px solid #FF1744;padding:10px;border-radius:6px;margin:6px 0}
 </style>
 """, unsafe_allow_html=True)
 
-defaults = {
-    "ai": None, "done": False, "history": [],
-    "refresh": 30, "paused": False, "last_asset": None,
-    "last_tf": None, "data_hash": None, "last_minute": None,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+def _safe_hash(obj):
+    """Hash determinístico para detectar cambios de datos."""
+    return hashlib.md5(str(obj).encode("utf-8")).hexdigest()
+
+def init_session():
+    defaults = {
+        "ai": None, "done": False, "history": [],
+        "refresh": 30, "paused": False, "last_asset": None,
+        "last_tf": None, "data_hash": None, "last_minute": None,
+        "error_count": 0, "last_error": "",
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_session()
 
 c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
 with c1:
-    st.markdown("<h4 style='margin:0;color:#00d2ff'>🧠 Exnova AI Pro</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='margin:0;color:#00d2ff'>🧠 Exnova AI Pro v4</h4>", unsafe_allow_html=True)
 with c2:
     refresh_opt = st.selectbox("⏱ Refresh", [10, 30, 60, 120, 300], index=1,
                                label_visibility="collapsed", key="refresh_sel")
@@ -67,6 +77,7 @@ if not st.session_state.paused:
 
 st.caption(f"⏱ {st.session_state.refresh}s • {datetime.now().strftime('%H:%M:%S')} • {asset} • {tf}")
 
+# Resetear estado si cambia activo o timeframe
 if st.session_state.last_asset != asset or st.session_state.last_tf != tf:
     st.session_state.done = False
     st.session_state.ai = None
@@ -74,57 +85,97 @@ if st.session_state.last_asset != asset or st.session_state.last_tf != tf:
     st.session_state.data_hash = None
     st.session_state.last_asset = asset
     st.session_state.last_tf = tf
+    st.session_state.error_count = 0
+    st.session_state.last_error = ""
 
-df = get_data(ticker, tf)
+# ── Descarga de datos ──
+df = pd.DataFrame()
+try:
+    df = get_data(ticker, tf)
+except Exception as e:
+    logger.error(f"Error descargando datos: {e}")
+
 if df.empty or len(df) < 100:
-    st.error("❌ Sin datos suficientes.")
+    st.markdown(f'<div class="error-box"><b>❌ Sin datos suficientes</b><br>Se requieren al menos 100 velas. Datos actuales: {len(df)}.</div>', unsafe_allow_html=True)
     st.stop()
 
-df = indis(df)
+try:
+    df = indis(df)
+except Exception as e:
+    st.markdown(f'<div class="error-box"><b>❌ Error calculando indicadores:</b> {e}</div>', unsafe_allow_html=True)
+    st.stop()
+
 if len(df) < 80:
-    st.error("❌ Datos insuficientes tras indicadores.")
+    st.markdown(f'<div class="error-box"><b>❌ Datos insuficientes tras indicadores:</b> {len(df)} filas</div>', unsafe_allow_html=True)
     st.stop()
 
-f = feats(df)
+try:
+    f = feats(df)
+except Exception as e:
+    st.markdown(f'<div class="error-box"><b>❌ Error en feature engineering:</b> {e}</div>', unsafe_allow_html=True)
+    st.stop()
 
+# ── Entrenamiento / Carga ──
 if not st.session_state.done:
     with st.spinner("🧠 Entrenando IA Ensemble..."):
         ai = ExnovaAI()
         ai.asset = asset
         ai.tf = tf
-        ai.load_or_train(asset, tf, df, f)
+        success = ai.load_or_train(asset, tf, df, f)
         st.session_state.ai = ai
         st.session_state.done = True
+        if not success:
+            st.warning(f"⚠️ Entrenamiento falló. Modo fallback activado: {ai.info.get('error', 'Desconocido')}")
 
 ai = st.session_state.ai
 ai.asset = asset
 ai.tf = tf
 
-current_hash = hash(str(df.index[-1])) if len(df) > 0 else 0
+# ── Online update con hash determinístico ──
+current_hash = _safe_hash(str(df.index[-1])) if len(df) > 0 else ""
 ai.online_update(df, f, current_hash, st.session_state.data_hash)
 st.session_state.data_hash = current_hash
 
-result = ai.predict(df, f)
-sig = result["signal"]
-pc = result["pc"]
-conf = result["conf"]
-strength = result["strength"]
-tech_score = result["tech_score"]
+# ── Predicción con manejo de excepciones ──
+try:
+    result = ai.predict(df, f)
+except Exception as e:
+    logger.error(f"Error en predict: {e}")
+    result = ai._neutral_result(str(e)) if ai else {
+        "signal": "NEUTRAL", "pc": 2, "conf": 0, "strength": "NEUTRAL",
+        "tech_score": 0, "tech_reasons": [], "votes": {}, "weights": {},
+        "components": {}, "error": str(e)
+    }
+
+sig = result.get("signal", "NEUTRAL")
+pc = result.get("pc", 2)
+conf = result.get("conf", 0)
+strength = result.get("strength", "NEUTRAL")
+tech_score = result.get("tech_score", 0)
 tech_reasons = result.get("tech_reasons", [])
 votes = result.get("votes", {})
 weights = result.get("weights", {})
 components = result.get("components", {})
 
 u = df.iloc[-1]
-pa = u.Close
-atr_val = u.ATR
-dec = 5 if any(x in ticker for x in ["USD=X", "JPY=X", "AUD", "GC=F"]) else 2
+pa = float(u.Close)
+atr_val = float(u.ATR)
+
+# ── Decimales corregidos ──
+if "JPY=X" in ticker or "JPY" in asset:
+    dec = 3
+elif any(x in ticker for x in ["=X", "GC=F"]):
+    dec = 5
+else:
+    dec = 2
+
 sl, tpv, sp_raw, tp_raw = calculate_levels(pa, atr_val, sig, dec)
 
 sig_colors = {"PUT": "#FF1744", "CALL": "#00E676", "NEUTRAL": "#546E7A"}
 col_main = sig_colors.get(sig, "#546E7A")
 em = ["📉", "📈", "➖"][pc]
 
+# ── Header de señal ──
 b1, b2, b3 = st.columns(3)
 comp = components.get("nn", {}).get("probs", {"put": 33, "call": 33, "neutral": 34})
 with b1:
@@ -135,10 +186,11 @@ with b2:
 with b3:
     st.markdown(f'<div class="mini-box" style="background-color:#00C853"><div style="font-size:10px">CALL</div><div style="font-size:20px">{comp.get("call", 0):.1f}%</div></div>', unsafe_allow_html=True)
 
+# ── Métricas ──
 ps = f"{pa:.{dec}f}"
 ss = f"{sl:.{dec}f}" if sl is not None else "—"
 ts = f"{tpv:.{dec}f}" if tpv is not None else "—"
-rr = f"1:{tp_raw/sp_raw:.1f}" if sig != "NEUTRAL" and sp_raw > 0 else "—"
+rr = f"1:{tp_raw/sp_raw:.1f}" if sig != "NEUTRAL" and sp_raw and sp_raw > 0 else "—"
 
 st.markdown(f"""
 <div class="metric-row">
@@ -153,9 +205,10 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 if tech_reasons:
-    tags = " ".join([f'<span class="reason-tag">✓ {r}</span>' for r in tech_reasons[:6]])
+    tags = " ".join([f'<span class="reason-tag">✓ {r}</span>' for r in tech_reasons[:8]])
     st.markdown(f'<div style="text-align:center;margin:6px 0">{tags}</div>', unsafe_allow_html=True)
 
+# ── Gráfico de velas ──
 st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>📊 Gráfico de velas</p>", unsafe_allow_html=True)
 
 dp = df.tail(80).copy()
@@ -179,7 +232,7 @@ fig.add_trace(go.Scatter(x=dp.index, y=dp["BL"], mode="lines",
     line=dict(color="rgba(255,255,255,0.1)", width=1), fill="tonexty",
     fillcolor="rgba(255,255,255,0.02)", showlegend=False), row=1, col=1)
 
-if sig != "NEUTRAL" and sl is not None:
+if sig != "NEUTRAL" and sl is not None and tpv is not None:
     fig.add_hline(y=sl, line_dash="dash", line_color="#FF1744",
         annotation_text="SL", annotation_position="right",
         annotation_font_size=9, annotation_font_color="#FF1744", row=1, col=1)
@@ -202,6 +255,7 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key="chart")
 
+# ── Indicadores técnicos ──
 st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>📋 Indicadores técnicos</p>", unsafe_allow_html=True)
 
 i1, i2, i3, i4, i5, i6 = st.columns(6)
@@ -217,6 +271,7 @@ for col, (n, v, d) in zip([i1, i2, i3, i4, i5, i6], inds):
     with col:
         st.markdown(f'<div class="metric-mini"><div style="font-size:8px;color:#888">{n}</div><div style="font-size:13px;font-weight:600">{v}</div><div style="font-size:7px;color:#555">{d}</div></div>', unsafe_allow_html=True)
 
+# ── Votos del Ensemble ──
 st.markdown("<p style='font-size:11px;margin:8px 0 4px 0'>🧬 Votos del Ensemble</p>", unsafe_allow_html=True)
 
 if votes:
@@ -237,23 +292,27 @@ if votes:
             </div>
             """, unsafe_allow_html=True)
 
-info = ai.info
-fb = ai.fallback
+# ── Estado del sistema ──
+info = ai.info if ai else {}
+fb = ai.fallback if ai else True
 status_color = "#FF1744" if fb else "#00E676"
 status_icon = "⚠️ Fallback" if fb else "✅ IA activa"
 mode_text = info.get("mode", "")
 last_up = info.get("last_update", "")
+test_nn = info.get("nn_test_acc", "N/A")
+test_rf = info.get("rf_test_acc", "N/A")
 
 st.markdown(f"""
 <div style="background:linear-gradient(135deg,#0a1520,#152030);border:1px solid {status_color};padding:8px;border-radius:8px;margin:8px 0;font-size:10px">
 <p style="margin:0;color:{status_color}"><b>🧬 {status_icon}</b> 
-| Score técnico: {tech_score}/100 | {mode_text} {last_up}</p>
+| Score técnico: {tech_score}/100 | {mode_text} {last_up}<br>
+<small>Test Acc — NN: {test_nn} | RF: {test_rf}</small></p>
 </div>
 """, unsafe_allow_html=True)
 
 with st.expander("🔧 Detalles del modelo", expanded=False):
     if info.get("samples"):
-        st.write(f"**Muestras:** {info['samples']}")
+        st.write(f"**Muestras:** {info['samples']} (train: {info.get('train','?')}, test: {info.get('test','?')})")
     if info.get("features"):
         st.write(f"**Features:** {info['features']}")
     if info.get("h1"):
@@ -261,7 +320,9 @@ with st.expander("🔧 Detalles del modelo", expanded=False):
     st.write(f"**Sklearn:** {'✅' if info.get('sklearn') else '❌'}")
     if info.get("error"):
         st.write(f"❌ Error: {info['error']}")
+    st.write(f"**Threshold:** {info.get('threshold', '?')}")
 
+# ── Historial de señales (solo PUT/CALL) ──
 now_key = datetime.now().strftime("%H:%M")
 if st.session_state.get("last_minute") != now_key and sig != "NEUTRAL":
     st.session_state.history.append({
