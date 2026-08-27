@@ -1,4 +1,4 @@
-"""
+""
 🧠 EXNOVA AI ENGINE v3.0 — Ensemble Híbrido
 NN + RandomForest + Análisis Técnico + Meta-Clasificador adaptativo
 """
@@ -637,6 +637,7 @@ def calculate_levels(price, atr_val, signal, dec):
     elif signal == "PUT":
         return price + sp, price - tp, sp, tp
     return None, None, sp, tp
+ app.py
 """
 📊 EXNOVA AI DASHBOARD v3.0
 """
