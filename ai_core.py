@@ -44,7 +44,7 @@ def sb_download(filename, bucket=BUCKET):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None
     try:url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{filename}"
-      tru:url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{filename}"
+      try:url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{filename}"
         headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
         r = requests.get(url, headers=headers, timeout=15)
         return r.content if r.status_code == 200 else None
